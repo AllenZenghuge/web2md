@@ -1,0 +1,14 @@
+{
+  "name": "web2md",
+  "version": "1.0.0",
+  "description": "Convert WeChat official account articles and web pages to Markdown with local images and YAML frontmatter",
+  "author": "Allen Zeng",
+  "license": "MIT",
+  "keywords": ["wechat", "markdown", "converter", "web-scraping", "claude-code", "skill"],
+  "skills": {
+    "web2md": {
+      "path": "SKILL.md",
+      "description": "Convert web pages and WeChat official account articles to Markdown files with local images and YAML frontmatter"
+    }
+  }
+}

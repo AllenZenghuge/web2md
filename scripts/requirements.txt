@@ -1,0 +1,6 @@
+playwright
+markdownify
+readability-lxml
+pyyaml
+beautifulsoup4
+requests
