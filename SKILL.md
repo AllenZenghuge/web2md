@@ -67,23 +67,24 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC]
 
 ## 输出结构
 
-`.md` 文件直接存放在类型目录下，`images/` 与类型目录平级，按文章标题关联：
+`.md` 文件直接存放在类型目录下，所有内容统一归入 `web2md/` 文件夹：
 
 ```
 ./
-├── 公众号文章/
-│   ├── 文章A.md
-│   └── 文章B.md
-├── 网页文章/
-│   └── 文章C.md
-└── images/
-    ├── 文章A/
-    │   ├── img_001.jpg
-    │   └── img_002.png
-    ├── 文章B/
-    │   └── img_001.jpg
-    └── 文章C/
-        └── img_001.jpg
+└── web2md/
+    ├── 公众号文章/
+    │   ├── 文章A.md
+    │   └── 文章B.md
+    ├── 网页文章/
+    │   └── 文章C.md
+    └── images/
+        ├── 文章A/
+        │   ├── img_001.jpg
+        │   └── img_002.png
+        ├── 文章B/
+        │   └── img_001.jpg
+        └── 文章C/
+            └── img_001.jpg
 ```
 
 Markdown 中图片引用：`../images/文章标题/img_001.jpg`

@@ -357,16 +357,17 @@ def main() -> None:
         title = meta.get("title", "untitled")
         safe_title = sanitize_filename(title)
 
-        # Auto-sort into type-specific subdirectory
+        # Auto-sort into type-specific subdirectory under web2md/
+        wrapper_dir = output_dir / "web2md"
         type_dir = "公众号文章" if is_wechat else "网页文章"
-        article_dir = output_dir / type_dir
+        article_dir = wrapper_dir / type_dir
         article_dir.mkdir(parents=True, exist_ok=True)
 
         # .md file directly in type dir
         md_path = article_dir / f"{safe_title}.md"
 
-        # Images go to sibling images/ directory, organized by article title
-        img_dir = output_dir / "images" / safe_title
+        # Images go to web2md/images/, organized by article title
+        img_dir = wrapper_dir / "images" / safe_title
         img_rel_prefix = f"../images/{safe_title}/"
 
         if not args.no_images:
