@@ -4,6 +4,8 @@
 import argparse
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime, timezone
@@ -16,6 +18,88 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as md_convert
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from readability import Document
+
+
+# ── defuddle integration ──────────────────────────────────────────────
+
+def defuddle_available() -> bool:
+    """Check if defuddle CLI is installed."""
+    return shutil.which("defuddle") is not None
+
+
+def should_use_defuddle(url: str, backend: str) -> bool:
+    """Decide whether to use defuddle for this URL.
+
+    Routing logic:
+    - backend=playwright → never use defuddle
+    - backend=defuddle → always use defuddle
+    - backend=auto:
+        - WeChat (mp.weixin.qq.com) → playwright (needs DOM selectors)
+        - .md URLs → playwright (defuddle says don't use for .md)
+        - Everything else → defuddle (faster, cleaner)
+    """
+    if backend == "playwright":
+        return False
+    if backend == "defuddle":
+        if not defuddle_available():
+            print("WARNING: defuddle not installed, falling back to playwright.", file=sys.stderr)
+            return False
+        return True
+    # auto
+    if is_wechat_url(url):
+        return False
+    if url.rstrip("/").endswith(".md"):
+        return False
+    if not defuddle_available():
+        return False
+    return True
+
+
+def fetch_via_defuddle(url: str, timeout: int) -> tuple:
+    """Extract content and metadata using defuddle CLI.
+    Returns (markdown_text, metadata_dict).
+    """
+    try:
+        result = subprocess.run(
+            ["defuddle", "parse", url, "--json"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        if result.returncode != 0:
+            print(f"ERROR: defuddle failed — {result.stderr.strip()}", file=sys.stderr)
+            sys.exit(2)
+
+        import json
+        data = json.loads(result.stdout)
+        content = data.get("markdown", data.get("content", ""))
+        if not content:
+            print("ERROR: defuddle returned empty content.", file=sys.stderr)
+            sys.exit(2)
+
+        meta = {
+            "source_url": url,
+            "converted_at": datetime.now(timezone.utc).astimezone().isoformat(),
+            "backend": "defuddle",
+        }
+        if data.get("title"):
+            meta["title"] = data["title"]
+        if data.get("description"):
+            meta["description"] = data["description"]
+        if data.get("domain"):
+            meta["domain"] = data["domain"]
+
+        return content, meta
+
+    except subprocess.TimeoutExpired:
+        print("ERROR: defuddle timed out.", file=sys.stderr)
+        sys.exit(2)
+    except json.JSONDecodeError:
+        print("ERROR: defuddle returned invalid JSON.", file=sys.stderr)
+        sys.exit(2)
+    except FileNotFoundError:
+        print("ERROR: defuddle CLI not found. Install with: npm install -g defuddle", file=sys.stderr)
+        sys.exit(3)
 
 
 def is_wechat_url(url: str) -> bool:
@@ -48,6 +132,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--timeout", type=int, default=30, help="Page load timeout in seconds"
+    )
+    parser.add_argument(
+        "--backend",
+        choices=["auto", "playwright", "defuddle"],
+        default="auto",
+        help="Content extraction backend: auto (route by URL type), "
+        "playwright (full browser, best for WeChat and image download), "
+        "defuddle (lightweight CLI, best for standard web pages)",
     )
     return parser.parse_args()
 
@@ -226,18 +318,9 @@ def download_images(html: str, img_dir: Path, img_rel_prefix: str, page_url: str
     soup = BeautifulSoup(html, "html.parser")
     img_dir.mkdir(parents=True, exist_ok=True)
 
-    seen_urls = {}
+    seen_urls = {}  # remote URL → local filename
     img_tags = soup.find_all("img")
     count = 0
-
-    headers = {
-        "Referer": page_url,
-        "User-Agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/148.0.0.0 Safari/537.36"
-        ),
-    }
 
     for tag in img_tags:
         src = tag.get("src") or tag.get("data-src") or tag.get("data-original") or ""
@@ -254,27 +337,13 @@ def download_images(html: str, img_dir: Path, img_rel_prefix: str, page_url: str
             _clean_img_attrs(tag)
             continue
 
-        try:
-            resp = requests.get(src, headers=headers, timeout=15, stream=True)
-            resp.raise_for_status()
-
-            content_type = resp.headers.get("Content-Type", "")
-            ext = _ext_from_content_type(content_type) or _ext_from_url(src) or ".jpg"
-
-            count += 1
-            filename = f"img_{count:03d}{ext}"
-            filepath = img_dir / filename
-
-            with open(filepath, "wb") as f:
-                for chunk in resp.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
+        count += 1
+        filename, ok = _download_single_image(src, page_url, img_dir, count)
+        if ok:
             seen_urls[src] = filename
             tag["src"] = img_rel_prefix + filename
             _clean_img_attrs(tag)
-
-        except Exception as e:
-            print(f"WARNING: Failed to download image {src}: {e}", file=sys.stderr)
+        else:
             tag.replace_with(f"[Image: {src}]")
 
     return str(soup), count
@@ -312,6 +381,117 @@ def _clean_img_attrs(tag) -> None:
             del tag[attr]
 
 
+# ── Shared image download core ──────────────────────────────────────
+
+def _download_single_image(img_url: str, page_url: str, img_dir: Path,
+                           count: int) -> tuple:
+    """Download one image, return (local_filename, succeeded).
+    Shared by both HTML and Markdown image pipelines.
+    """
+    headers = {
+        "Referer": page_url,
+        "User-Agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/148.0.0.0 Safari/537.36"
+        ),
+    }
+    try:
+        resp = requests.get(img_url, headers=headers, timeout=15, stream=True)
+        resp.raise_for_status()
+
+        content_type = resp.headers.get("Content-Type", "")
+        ext = _ext_from_content_type(content_type) or _ext_from_url(img_url) or ".jpg"
+
+        filename = f"img_{count:03d}{ext}"
+        filepath = img_dir / filename
+
+        with open(filepath, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+        return filename, True
+
+    except Exception as e:
+        print(f"WARNING: Failed to download image {img_url}: {e}", file=sys.stderr)
+        return "", False
+
+
+# ── Markdown image download (for defuddle path) ─────────────────────
+
+_MD_IMAGE_RE = re.compile(r'!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
+
+
+def _extract_image_urls_from_markdown(md_text: str) -> list:
+    """Extract unique image URLs from markdown text.
+    Handles both ![alt](url) and <img src="url"> patterns.
+    """
+    urls = []
+    seen = set()
+
+    # Markdown images: ![alt](url)
+    for match in _MD_IMAGE_RE.finditer(md_text):
+        url = match.group(2)
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    # HTML <img> tags
+    for match in re.finditer(r'<img[^>]+src=["\']([^"\']+)["\']', md_text):
+        url = match.group(1)
+        if url not in seen:
+            seen.add(url)
+            urls.append(url)
+
+    return urls
+
+
+def download_images_from_markdown(md_text: str, img_dir: Path,
+                                  img_rel_prefix: str, page_url: str) -> tuple:
+    """Download images referenced in markdown, rewrite URLs to local paths.
+    Uses the same _download_single_image() core as the HTML pipeline.
+    Returns (modified_markdown, image_count).
+    """
+    img_dir.mkdir(parents=True, exist_ok=True)
+
+    url_map = {}  # remote URL → local filename
+    count = 0
+    result = md_text
+
+    # Collect all image URLs (deduped, order preserved)
+    image_urls = _extract_image_urls_from_markdown(md_text)
+
+    for img_url in image_urls:
+        full_url = urljoin(page_url, img_url)
+        if not full_url.startswith("http"):
+            continue
+
+        count += 1
+        filename, ok = _download_single_image(full_url, page_url, img_dir, count)
+        if ok:
+            url_map[img_url] = filename
+
+    # Rewrite all image references in markdown
+    for remote_url, local_file in url_map.items():
+        local_ref = img_rel_prefix + local_file
+        # Escape special regex chars in URL
+        escaped = re.escape(remote_url)
+        # Replace in ![alt](url) pattern
+        result = re.sub(
+            r'!\[([^\]]*)\]\(' + escaped + r'(?:\s+"[^"]*")?\)',
+            r'![\1](' + re.escape(local_ref) + ')',
+            result
+        )
+        # Replace in <img src="url"> pattern
+        result = re.sub(
+            r'(<img[^>]*src=["\'])' + escaped + r'(["\'])',
+            r'\1' + re.escape(local_ref) + r'\2',
+            result
+        )
+
+    return result, count
+
+
 def convert_to_markdown(html: str) -> str:
     """Convert cleaned HTML to Markdown."""
     md = md_convert(
@@ -344,9 +524,64 @@ def main() -> None:
             print(f"ERROR: Cannot write to {output_dir} — {e}", file=sys.stderr)
             sys.exit(5)
 
+    use_defuddle = should_use_defuddle(args.url, args.backend)
+
+    # ── defuddle path (fast extraction + local image download) ────
+    if use_defuddle:
+        article_type = "网页"
+        print(f"正在转换{article_type}（defuddle 后端）...", file=sys.stderr)
+
+        md_content, meta = fetch_via_defuddle(args.url, args.timeout)
+
+        title = meta.get("title", "untitled")
+        safe_title = sanitize_filename(title)
+
+        wrapper_dir = output_dir / "web2md"
+        type_dir = "网页文章"
+        article_dir = wrapper_dir / type_dir
+        article_dir.mkdir(parents=True, exist_ok=True)
+
+        md_path = article_dir / f"{safe_title}.md"
+
+        # Download images referenced in markdown
+        img_dir = wrapper_dir / "images" / safe_title
+        img_rel_prefix = f"../images/{safe_title}/"
+
+        if not args.no_images:
+            md_content, img_count = download_images_from_markdown(
+                md_content, img_dir, img_rel_prefix, args.url
+            )
+            if img_count == 0 and img_dir.exists():
+                try:
+                    img_dir.rmdir()
+                except OSError:
+                    pass
+        else:
+            img_count = 0
+
+        with open(md_path, "w", encoding="utf-8") as f:
+            frontmatter = yaml.dump(
+                meta, allow_unicode=True, default_flow_style=False, sort_keys=False
+            )
+            f.write("---\n")
+            f.write(frontmatter.strip())
+            f.write("\n---\n\n")
+            f.write(md_content)
+            f.write("\n")
+
+        print(f"DONE: {md_path}", file=sys.stderr)
+        print(f"Title: {meta.get('title', 'N/A')}", file=sys.stderr)
+        print(f"Backend: defuddle", file=sys.stderr)
+        if not args.no_images:
+            print(f"Images: {img_count} downloaded", file=sys.stderr)
+
+        return
+
+    # ── playwright path (full browser, for WeChat / image download) ──
+    is_wechat_flag = is_wechat_url(args.url)
     page, is_wechat, playwright, browser, context = fetch_page(args.url, args.timeout)
     article_type = "公众号文章" if is_wechat else "网页"
-    print(f"正在转换{article_type}...", file=sys.stderr)
+    print(f"正在转换{article_type}（Playwright 后端）...", file=sys.stderr)
 
     try:
         scroll_to_load_images(page)
