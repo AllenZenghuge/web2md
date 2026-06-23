@@ -87,7 +87,11 @@ def fetch_via_defuddle(url: str, timeout: int) -> tuple:
         if data.get("description"):
             meta["description"] = data["description"]
         if data.get("domain"):
-            meta["domain"] = data["domain"]
+            meta["account_name"] = data["domain"]
+        if data.get("author"):
+            meta["author"] = data["author"]
+        if data.get("date") or data.get("published"):
+            meta["publish_date"] = data.get("date") or data.get("published")
 
         return content, meta
 
@@ -140,6 +144,11 @@ def parse_args() -> argparse.Namespace:
         help="Content extraction backend: auto (route by URL type), "
         "playwright (full browser, best for WeChat and image download), "
         "defuddle (lightweight CLI, best for standard web pages)",
+    )
+    parser.add_argument(
+        "--conversion-log",
+        default="",
+        help="Path to conversion record file (appends entry after successful conversion)",
     )
     return parser.parse_args()
 
@@ -257,8 +266,8 @@ def extract_metadata(page, url: str, is_wechat: bool) -> dict:
         if cover:
             meta["cover_image"] = cover
 
-    # Remove empty values
-    return {k: v for k, v in meta.items() if v}
+    # Always return all known keys; normalize_meta will fill the rest
+    return meta
 
 
 def _get_text(page, selector: str) -> str:
@@ -492,6 +501,38 @@ def download_images_from_markdown(md_text: str, img_dir: Path,
     return result, count
 
 
+# ── Required frontmatter fields ──────────────────────────────────────
+
+META_DEFAULTS = {
+    "title": "",
+    "author": "",
+    "account_name": "",
+    "source_url": "",
+    "publish_date": "",
+    "converted_at": "",
+    "description": "",
+    "tags": [],
+    "aliases": [],
+    "backend": "",
+}
+
+
+def normalize_meta(meta: dict, url: str, article_type: str) -> dict:
+    """Ensure all required frontmatter fields exist, filling missing with sensible defaults."""
+    from urllib.parse import urlparse
+
+    result = dict(META_DEFAULTS)
+    result.update(meta)
+    result["source_url"] = url or result["source_url"]
+
+    # Derive account_name from domain if not set
+    if not result["account_name"]:
+        parsed = urlparse(url)
+        result["account_name"] = parsed.netloc or ""
+
+    return result
+
+
 def convert_to_markdown(html: str) -> str:
     """Convert cleaned HTML to Markdown."""
     md = md_convert(
@@ -506,6 +547,57 @@ def convert_to_markdown(html: str) -> str:
     )
     md = re.sub(r"\n{4,}", "\n\n\n", md)
     return md.strip()
+
+
+def append_conversion_record(log_path: str, meta: dict, md_path: Path,
+                             img_count: int, backend: str, article_type: str) -> None:
+    """Append a conversion entry to the record file (Obsidian-compatible)."""
+    log_file = Path(log_path)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    now = datetime.now(timezone.utc).astimezone()
+    date_str = now.strftime("%Y-%m-%d %H:%M")
+    title = meta.get("title", "untitled")
+    source_url = meta.get("source_url", "")
+
+    wikilink = f"[[{md_path.stem}|{title}]]"
+    entry = (
+        f"| {date_str} | {wikilink} | {source_url} | "
+        f"`{md_path}` | {backend} | {img_count} |\n"
+    )
+
+    if log_file.exists():
+        with open(log_file, "r", encoding="utf-8") as f:
+            existing = f.read()
+        # Append after the table body (last line of the file)
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(entry)
+    else:
+        # Create new record file with frontmatter + table header
+        frontmatter = f"""---
+title: web2md 转换记录
+date: {now.strftime("%Y-%m-%d")}
+tags:
+  - web2md
+  - conversion-log
+aliases:
+  - 转换记录
+  - web2md-log
+---
+
+# web2md 转换记录
+
+> [!info] 说明
+> 所有通过 web2md 转换的文章记录。无论从哪个项目调用，均统一记录于此。
+
+| 转换时间 | 文章标题 | 来源 URL | 输出路径 | 后端 | 图片数 |
+|----------|---------|----------|----------|------|--------|
+"""
+        with open(log_file, "w", encoding="utf-8") as f:
+            f.write(frontmatter)
+            f.write(entry)
+
+    print(f"LOG: Appended to {log_path}", file=sys.stderr)
 
 
 def main() -> None:
@@ -528,7 +620,7 @@ def main() -> None:
 
     # ── defuddle path (fast extraction + local image download) ────
     if use_defuddle:
-        article_type = "网页"
+        article_type = "网页文章"
         print(f"正在转换{article_type}（defuddle 后端）...", file=sys.stderr)
 
         md_content, meta = fetch_via_defuddle(args.url, args.timeout)
@@ -537,15 +629,13 @@ def main() -> None:
         safe_title = sanitize_filename(title)
 
         wrapper_dir = output_dir / "web2md"
-        type_dir = "网页文章"
-        article_dir = wrapper_dir / type_dir
-        article_dir.mkdir(parents=True, exist_ok=True)
+        wrapper_dir.mkdir(parents=True, exist_ok=True)
 
-        md_path = article_dir / f"{safe_title}.md"
+        md_path = wrapper_dir / f"{safe_title}.md"
 
         # Download images referenced in markdown
         img_dir = wrapper_dir / "images" / safe_title
-        img_rel_prefix = f"../images/{safe_title}/"
+        img_rel_prefix = f"web2md/images/{safe_title}/"
 
         if not args.no_images:
             md_content, img_count = download_images_from_markdown(
@@ -559,6 +649,14 @@ def main() -> None:
         else:
             img_count = 0
 
+        # Normalize: ensure all 9 required properties exist
+        meta = normalize_meta(meta, args.url, article_type)
+
+        # Add obsidian-markdown properties
+        meta["tags"] = ["web2md", article_type]
+        meta["aliases"] = [title]
+        meta["backend"] = "defuddle"
+
         with open(md_path, "w", encoding="utf-8") as f:
             frontmatter = yaml.dump(
                 meta, allow_unicode=True, default_flow_style=False, sort_keys=False
@@ -568,6 +666,11 @@ def main() -> None:
             f.write("\n---\n\n")
             f.write(md_content)
             f.write("\n")
+
+        if args.conversion_log:
+            append_conversion_record(
+                args.conversion_log, meta, md_path, img_count, "defuddle", article_type
+            )
 
         print(f"DONE: {md_path}", file=sys.stderr)
         print(f"Title: {meta.get('title', 'N/A')}", file=sys.stderr)
@@ -580,7 +683,7 @@ def main() -> None:
     # ── playwright path (full browser, for WeChat / image download) ──
     is_wechat_flag = is_wechat_url(args.url)
     page, is_wechat, playwright, browser, context = fetch_page(args.url, args.timeout)
-    article_type = "公众号文章" if is_wechat else "网页"
+    article_type = "公众号文章" if is_wechat else "网页文章"
     print(f"正在转换{article_type}（Playwright 后端）...", file=sys.stderr)
 
     try:
@@ -592,18 +695,15 @@ def main() -> None:
         title = meta.get("title", "untitled")
         safe_title = sanitize_filename(title)
 
-        # Auto-sort into type-specific subdirectory under web2md/
+        # Output .md directly under web2md/
         wrapper_dir = output_dir / "web2md"
-        type_dir = "公众号文章" if is_wechat else "网页文章"
-        article_dir = wrapper_dir / type_dir
-        article_dir.mkdir(parents=True, exist_ok=True)
+        wrapper_dir.mkdir(parents=True, exist_ok=True)
 
-        # .md file directly in type dir
-        md_path = article_dir / f"{safe_title}.md"
+        md_path = wrapper_dir / f"{safe_title}.md"
 
         # Images go to web2md/images/, organized by article title
         img_dir = wrapper_dir / "images" / safe_title
-        img_rel_prefix = f"../images/{safe_title}/"
+        img_rel_prefix = f"{img_dir}/"
 
         if not args.no_images:
             html, img_count = download_images(html, img_dir, img_rel_prefix, args.url)
@@ -621,6 +721,14 @@ def main() -> None:
         if "cover_image" in meta and not args.no_images and img_count > 0:
             del meta["cover_image"]
 
+        # Normalize: ensure all 9 required properties exist
+        meta = normalize_meta(meta, args.url, article_type)
+
+        # Add obsidian-markdown properties
+        meta["tags"] = ["web2md", article_type]
+        meta["aliases"] = [title]
+        meta["backend"] = "playwright"
+
         with open(md_path, "w", encoding="utf-8") as f:
             frontmatter = yaml.dump(
                 meta, allow_unicode=True, default_flow_style=False, sort_keys=False
@@ -630,6 +738,11 @@ def main() -> None:
             f.write("\n---\n\n")
             f.write(md)
             f.write("\n")
+
+        if args.conversion_log:
+            append_conversion_record(
+                args.conversion_log, meta, md_path, img_count, "playwright", article_type
+            )
 
         print(f"DONE: {md_path}", file=sys.stderr)
         print(f"Title: {meta.get('title', 'N/A')}", file=sys.stderr)
