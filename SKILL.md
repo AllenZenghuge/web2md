@@ -83,7 +83,7 @@ python3 ~/.claude/skills/web2md/scripts/web2md.py "<url>" \
    - ❌ **引号冲突**：title 值含弯引号 `"` `"` 时，外层用单引号 `'...'` 包裹，不能用直双引号 `"..."`，否则 YAML 解析失败
    - ✅ 三项检查通过后，才汇报转换成功
 
-5. 汇报结果：输出路径、标题、后端、图片数量、生成的 4 个 tag、2 个 aliases、description
+6. 汇报结果：输出路径、标题、后端、图片数量、生成的 4 个 tag、2 个 aliases、description
 
 
 ## CLI 参数
