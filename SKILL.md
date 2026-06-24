@@ -68,16 +68,16 @@ python3 ~/.claude/skills/web2md/scripts/web2md.py "<url>" \
   --conversion-log "/Users/allenzeng/Library/Mobile Documents/iCloud~md~obsidian/Documents/龙龙的黑曜石/web2md/转换记录.md"
 ```
 
-4. **AI 后处理（必须）** — 脚本输出的 `tags` 和 `aliases` 为基础占位值，需 AI 增强：
+4. **AI 后处理（必须）** — 脚本输出的 `tags`、`aliases`、`description` 为基础值，需 AI 增强：
    - 读取转换后的 `.md` 文件内容
    - **分析文章主题，生成 4 个最相关的 tag**（精确、有区分度的关键词，用英文或中文视文章内容而定）
-   - **精炼 aliases（至少 2 个）**：参考 [[Obsidian_六大技能完整指南]] 的 aliases 模式（如 `Obsidian Skills 指南` + `六大技能`）：
-     - **别名 1**：标题的提炼版，简洁但有辨识度（如英文缩写、简短中文概括，≤20 字）
-     - **别名 2**：极简短、好记的关键词（2-8 字，方便快速输入 wikilink）
-   - 用 Edit 工具更新 frontmatter：`tags` 合并为 `[web2md, 类型tag, ai_tag1, ai_tag2, ai_tag3, ai_tag4]`
-   - 用 Edit 工具更新 frontmatter：`aliases` 替换为 `[提炼别名, 关键词别名]`
+   - **精炼 aliases（至少 2 个）**：参考 [[Obsidian_六大技能完整指南]] 的 aliases 模式：
+     - **别名 1**：标题的提炼版（≤20 字）
+     - **别名 2**：极简关键词（2-8 字）
+   - **生成 description**：AI 根据文章内容整理一段中文摘要描述（2-3 句话，概括核心内容）
+   - 用 Edit 工具更新 frontmatter：`tags` + `aliases` + `description`
 
-5. 汇报结果：输出路径、标题、后端、图片数量、生成的 4 个 tag、精炼的 2 个 aliases
+5. 汇报结果：输出路径、标题、后端、图片数量、生成的 4 个 tag、2 个 aliases、description
 
 
 ## CLI 参数
@@ -97,7 +97,7 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 
 ## Frontmatter 字段
 
-**每篇转换文章至少包含以下 9 个属性**（缺失字段自动补空值，`account_name` 无值时从域名推导）：
+**每篇转换文章至少包含以下 10 个属性**（缺失字段自动补空值，`account_name` 无值时从域名推导）：
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
@@ -107,7 +107,7 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 | `source_url` | string | ✅ | 原始 URL |
 | `publish_date` | string | ✅ | 发布日期（取不到为空） |
 | `converted_at` | string | ✅ | 转换时间（ISO 格式） |
-| `description` | string | ✅ | 文章摘要（取不到为空） |
+| `description` | string | ✅ | 页面 meta 提取；**AI 后处理生成精炼中文摘要**（每次更新同步刷新） |
 | `tags` | list | ✅ | 6 个 tag：`[web2md, 类型, ai_tag1...4]`（AI 后处理补全） |
 | `aliases` | list | ✅ | 至少 2 个：提炼版标题 + 关键词别名（参考六大技能模式） |
 | `backend` | string | ✅ | 转换后端（playwright / defuddle） |
