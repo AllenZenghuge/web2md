@@ -14,6 +14,9 @@
 | 2026-06-23 22:49 | v1.3.1 | **aliases 至少 2 个**：参考六大技能模式，提炼版标题 + 极简关键词别名；新增 `test_web2md.py` TDD 测试 |
 | 2026-06-23 23:19 | v1.3.2 | **图片路径修正**：改为 vault 根相对路径 `web2md/images/`，Obsidian 可直接渲染 |
 | 2026-06-23 23:35 | v1.3.3 | **必要属性强制存在**：新增 `normalize_meta()` + `META_DEFAULTS`，9 个属性缺失自动补空值/域名推导；TDD 扩展至 15 用例 |
+| 2026-06-24 09:42 | v1.3.4 | **wikilink 表格兼容**：转换记录 wikilink 从 `[[文件名\|显示文本]]` 改为 `[[文件名]]`，修复表格中 `\|` 冲突 |
+| 2026-06-24 10:42 | v1.3.5 | **description 属性 + 全局 6 属性铁律**：frontmatter 新增 `description`；全局规则从 5→6 属性；planning-with-files 同步更新 |
+| 2026-06-24 15:01 | v1.3.6 | **YAML 写入校验**：`normalize_meta()` 增加 aliases/tags 非空保护；SKILL.md 新增 AI 后处理校验步骤（引号冲突、重复 key、空值检查）；README 输出结构同步 |
 
 ---
 
@@ -69,7 +72,9 @@ v1.0.x                              v1.1.x
                            │
                            ▼
                     normalize_meta()
-                    (9 属性补全：缺失→空值，account_name→域名推导)
+                    (9 属性补全：缺失→空值，
+                     account_name→域名推导，
+                     aliases/tags 非空保护)
                            │
                            ▼
                     .md 输出 (tags/aliases 占位)
@@ -77,6 +82,10 @@ v1.0.x                              v1.1.x
                            ▼
                     AI 后处理
                     (4 个 AI tag + 2 个精炼 aliases)
+                           │
+                           ▼
+                    YAML 校验（v1.3.6 新增）
+                    (引号冲突 / 重复 key / 空值检查)
                            │
                            ▼
                     append_conversion_record()

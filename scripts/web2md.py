@@ -530,6 +530,15 @@ def normalize_meta(meta: dict, url: str, article_type: str) -> dict:
         parsed = urlparse(url)
         result["account_name"] = parsed.netloc or ""
 
+    # Ensure aliases is always a non-empty list
+    if not result.get("aliases"):
+        title = result.get("title", "")
+        result["aliases"] = [title] if title else ["未命名"]
+
+    # Ensure tags is always a non-empty list
+    if not result.get("tags"):
+        result["tags"] = ["web2md", article_type or "article"]
+
     return result
 
 

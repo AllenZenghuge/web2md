@@ -33,16 +33,23 @@ Uses Mozilla's readability algorithm to extract main content, strips navigation 
 
 ```
 ./
-├── 公众号文章/
-│   ├── article-a.md
-│   └── article-b.md
-├── 网页文章/
-│   └── page-c.md
-└── images/
-    └── article-a/
-        ├── img_001.jpg
-        └── img_002.png
+└── web2md/
+    ├── 文章A.md
+    ├── 文章B.md
+    ├── 转换记录.md
+    └── images/
+        ├── 文章A/
+        │   ├── img_001.jpg
+        │   └── img_002.png
+        └── 文章B/
+            └── img_001.jpg
 ```
+
+Markdown 中图片引用使用 vault 根相对路径：`web2md/images/文章标题/img_001.jpg`
+
+## Frontmatter Fields
+
+每篇转换文章包含 10 个属性，AI 后处理后过三道校验（引号冲突/重复key/空值）。
 
 ## CLI Usage
 

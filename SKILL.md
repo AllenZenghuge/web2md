@@ -77,6 +77,12 @@ python3 ~/.claude/skills/web2md/scripts/web2md.py "<url>" \
    - **生成 description**：AI 根据文章内容整理一段中文摘要描述（2-3 句话，概括核心内容）
    - 用 Edit 工具更新 frontmatter：`tags` + `aliases` + `description`
 
+5. **YAML 校验（必须）** — AI 后处理完成后，逐项检查：
+   - ❌ **重复 key**：同一个 key 出现两次（如 `description` 同时有脚本生成值和 AI 后处理值）→ 删除多余的，只保留一个
+   - ❌ **aliases 空值**：`aliases:` 下面必须有至少一个列表项，不能空行
+   - ❌ **引号冲突**：title 值含弯引号 `"` `"` 时，外层用单引号 `'...'` 包裹，不能用直双引号 `"..."`，否则 YAML 解析失败
+   - ✅ 三项检查通过后，才汇报转换成功
+
 5. 汇报结果：输出路径、标题、后端、图片数量、生成的 4 个 tag、2 个 aliases、description
 
 
