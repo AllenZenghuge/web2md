@@ -139,18 +139,18 @@ class TestConversionRecord(unittest.TestCase):
         meta2 = {"title": "文章B", "source_url": "https://b.com"}
 
         append_conversion_record(
-            self.log_path, meta1, Path("/tmp/a.md"), 1, "defuddle", "网页文章"
+            self.log_path, meta1, Path("/tmp/web2md/文章A.md"), 1, "defuddle", "网页文章"
         )
         append_conversion_record(
-            self.log_path, meta2, Path("/tmp/b.md"), 2, "playwright", "公众号文章"
+            self.log_path, meta2, Path("/tmp/web2md/文章B.md"), 2, "playwright", "公众号文章"
         )
 
         with open(self.log_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        # 两行记录都应在
-        self.assertIn("文章A", content)
-        self.assertIn("文章B", content)
+        # Wikilinks 使用文件名（无显示文本）
+        self.assertIn("[[文章A]]", content)
+        self.assertIn("[[文章B]]", content)
         self.assertIn("https://a.com", content)
         self.assertIn("https://b.com", content)
 
@@ -158,7 +158,7 @@ class TestConversionRecord(unittest.TestCase):
         self.assertEqual(content.count("| 转换时间 |"), 1)
 
     def test_wikilink_format_in_record(self):
-        """记录中的文章标题使用 Obsidian wikilink 格式"""
+        """记录中的文章标题使用 Obsidian wikilink 格式（无显示文本，避免与表格 | 冲突）"""
         meta = {"title": "金税四期新规", "source_url": "https://example.com"}
         md_path = Path("/tmp/web2md/金税四期新规.md")
 
@@ -169,7 +169,9 @@ class TestConversionRecord(unittest.TestCase):
         with open(self.log_path, "r", encoding="utf-8") as f:
             content = f.read()
 
-        self.assertIn("[[金税四期新规|金税四期新规]]", content)
+        self.assertIn("[[金税四期新规]]", content)
+        # 确保没有破坏表格的 | 符号
+        self.assertNotIn("[[金税四期新规|", content)
 
 
 class TestImagePaths(unittest.TestCase):

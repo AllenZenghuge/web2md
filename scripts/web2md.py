@@ -560,7 +560,7 @@ def append_conversion_record(log_path: str, meta: dict, md_path: Path,
     title = meta.get("title", "untitled")
     source_url = meta.get("source_url", "")
 
-    wikilink = f"[[{md_path.stem}|{title}]]"
+    wikilink = f"[[{md_path.stem}]]"
     entry = (
         f"| {date_str} | {wikilink} | {source_url} | "
         f"`{md_path}` | {backend} | {img_count} |\n"
