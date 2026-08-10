@@ -712,7 +712,7 @@ def main() -> None:
 
         # Images go to web2md/images/, organized by article title
         img_dir = wrapper_dir / "images" / safe_title
-        img_rel_prefix = f"{img_dir}/"
+        img_rel_prefix = f"images/{safe_title}/"
 
         if not args.no_images:
             html, img_count = download_images(html, img_dir, img_rel_prefix, args.url)
