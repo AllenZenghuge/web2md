@@ -727,7 +727,7 @@ def main() -> None:
 
         md = convert_to_markdown(html)
 
-        if "cover_image" in meta and not args.no_images and img_count > 0:
+        if "cover_image" in meta and not args.no_images:
             del meta["cover_image"]
 
         # Normalize: ensure all 9 required properties exist
