@@ -303,8 +303,27 @@ def extract_content(page, is_wechat: bool) -> str:
             () => {
                 const content = document.getElementById('js_content');
                 if (!content) return '';
+                // 图片消息（#js_image_content）的主图在 swiper 容器里，不在 #js_content 内，
+                // 需手动搬到正文，否则会丢失全部配图。
+                if (document.getElementById('js_image_content')) {
+                    const seen = new Set();
+                    const imgs = [];
+                    document.querySelectorAll('#img_list img, #img_swiper img').forEach(el => {
+                        const src = el.getAttribute('src') || el.getAttribute('data-src') || '';
+                        if (src && !seen.has(src)) { seen.add(src); imgs.push(src); }
+                    });
+                    const anchor = content.querySelector('#js_image_desc') || content.firstChild;
+                    const parent = (anchor && anchor.parentNode) || content;
+                    imgs.reverse().forEach(src => {
+                        const img = document.createElement('img');
+                        img.setAttribute('src', src);
+                        img.setAttribute('alt', '图片');
+                        parent.insertBefore(img, anchor);
+                    });
+                }
                 const removals = content.querySelectorAll(
-                    '.rich_media_meta_list, .reward_area, .like_media_thumb, '
+                    'h1.rich_media_title, '
+                    + '.rich_media_meta_list, .reward_area, .like_media_thumb, '
                     + '.rich_media_tool, .rich_media_area_extra, '
                     + 'mp-common-clipboard, .mp-common-profile'
                 );
