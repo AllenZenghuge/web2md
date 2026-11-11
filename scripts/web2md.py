@@ -240,7 +240,15 @@ def extract_metadata(page, url: str, is_wechat: bool) -> dict:
     }
 
     if is_wechat:
-        meta["title"] = _get_text(page, "#activity-name") or ""
+        # Newer WeChat article layouts no longer render #activity-name;
+        # h1.rich_media_title / og:title still carry the title.
+        meta["title"] = (
+            _get_text(page, "#activity-name")
+            or _get_text(page, "h1.rich_media_title")
+            or _get_meta(page, "og:title")
+            or page.title()
+            or ""
+        )
         meta["author"] = _get_text(page, "#js_author_name") or ""
         meta["account_name"] = _get_text(page, "#js_name") or ""
         meta["publish_date"] = _get_text(page, "#publish_time") or ""
