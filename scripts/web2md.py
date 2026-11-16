@@ -2,6 +2,7 @@
 """web2md — Convert web pages and WeChat articles to Markdown with local images."""
 
 import argparse
+import json
 import os
 import re
 import shutil
@@ -19,6 +20,17 @@ from markdownify import markdownify as md_convert
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from readability import Document
 
+from asr import AsrError, render_transcript, summarize, transcribe
+from ocr import ocr_images
+from ocr import render_markdown as render_ocr
+from platforms import (
+    PLATFORM_DOUYIN,
+    PLATFORM_XHS,
+    detect_platform,
+    extract_first_url,
+)
+from social import LABELS, download_media, fetch_social_post
+
 
 # ── defuddle integration ──────────────────────────────────────────────
 
@@ -35,6 +47,7 @@ def should_use_defuddle(url: str, backend: str) -> bool:
     - backend=defuddle → always use defuddle
     - backend=auto:
         - WeChat (mp.weixin.qq.com) → playwright (needs DOM selectors)
+        - 小红书 / 抖音 → playwright (需浏览器渲染 + 接口拦截)
         - .md URLs → playwright (defuddle says don't use for .md)
         - Everything else → defuddle (faster, cleaner)
     """
@@ -47,6 +60,8 @@ def should_use_defuddle(url: str, backend: str) -> bool:
         return True
     # auto
     if is_wechat_url(url):
+        return False
+    if detect_platform(url) in (PLATFORM_XHS, PLATFORM_DOUYIN):
         return False
     if url.rstrip("/").endswith(".md"):
         return False
@@ -149,6 +164,31 @@ def parse_args() -> argparse.Namespace:
         "--conversion-log",
         default="",
         help="Path to conversion record file (appends entry after successful conversion)",
+    )
+    parser.add_argument(
+        "--save-video",
+        action="store_true",
+        help="小红书/抖音：把视频（及实况片段）一起下载到本地",
+    )
+    parser.add_argument(
+        "--no-transcript",
+        action="store_true",
+        help="小红书/抖音：跳过语音转写，不生成逐字稿与摘要",
+    )
+    parser.add_argument(
+        "--no-ocr",
+        action="store_true",
+        help="小红书/抖音：跳过图片文字提取（默认识别图片中的文字）",
+    )
+    parser.add_argument(
+        "--asr-model",
+        default="paraformer-v2",
+        help="DashScope 转写模型（默认 paraformer-v2）",
+    )
+    parser.add_argument(
+        "--language",
+        default="zh",
+        help="转写语言提示（默认 zh）",
     )
     return parser.parse_args()
 
@@ -636,8 +676,147 @@ aliases:
     print(f"LOG: Appended to {log_path}", file=sys.stderr)
 
 
+# ── 小红书 / 抖音 ────────────────────────────────────────────────────
+
+
+def convert_social_post(args, platform: str, output_dir: Path) -> None:
+    """小红书/抖音转换主流程：取 Post → 下载媒体 → （可选）转写 → 写 md。"""
+    label = LABELS[platform]
+    print(f"正在转换{label}（{platform} 后端）...", file=sys.stderr)
+
+    post = fetch_social_post(args.url, platform, timeout=max(args.timeout, 40))
+    if post is None:
+        print("ERROR: 未提取到任何内容。可能是登录墙、反爬壳页，或笔记已删除。",
+              file=sys.stderr)
+        sys.exit(6)
+
+    title = post.title or "未命名"
+    safe_title = sanitize_filename(title)
+    wrapper_dir = output_dir / "web2md"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    md_path = wrapper_dir / f"{safe_title}.md"
+    img_dir = wrapper_dir / "images" / safe_title
+    img_rel_prefix = f"web2md/images/{safe_title.replace(' ', '%20')}/"
+
+    parts: list[str] = []
+    if post.text:
+        parts.append(post.text)
+
+    img_count = 0
+    downloaded: list[tuple[int, str, Path]] = []
+    if post.images:
+        if args.no_images:
+            parts.extend(f"![图片]({i.url})" for i in post.images)
+        else:
+            img_dir.mkdir(parents=True, exist_ok=True)
+            for idx, item in enumerate(post.images, 1):
+                filename, ok = _download_single_image(item.url, args.url, img_dir, idx)
+                if ok:
+                    img_count += 1
+                    downloaded.append((idx, filename, img_dir / filename))
+                else:
+                    parts.append(f"[Image: {item.url}]")
+
+    # 图片内文字：本地 OCR，不调在线模型
+    ocr_map: dict[str, str] = {}
+    if downloaded and not args.no_ocr:
+        ocr_map = ocr_images([p for _, _, p in downloaded])
+        if ocr_map:
+            print(f"OCR: {len(ocr_map)} 张图片提取到文字", file=sys.stderr)
+
+    for idx, filename, _ in downloaded:
+        parts.append(f"![图片]({img_rel_prefix}{filename})")
+        text = ocr_map.get(filename)
+        if text:
+            parts.append(render_ocr(text))
+
+    # 实况照片的动态片段：不下载时至少把地址留在笔记里
+    clips = [i for i in post.images if i.motion_url]
+    if clips and not args.save_video:
+        parts.append("**实况片段**：" + " / ".join(i.motion_url for i in clips))
+
+    transcript = None
+    if post.video_url:
+        parts.append(f"**视频地址**：{post.video_url}")
+        if args.save_video:
+            name, ok = download_media(post.video_url, img_dir if not args.no_images else wrapper_dir,
+                                       f"{safe_title}-视频", "https://www.douyin.com/")
+            if ok:
+                parts.append(f"**本地视频**：{img_rel_prefix}{name}")
+        if not args.no_transcript:
+            transcript = _try_transcribe(post.video_url, args)
+
+    if transcript is not None:
+        parts.append(transcript)
+
+    meta = {
+        "title": title,
+        "author": post.author,
+        "account_name": post.author,
+        "source_url": args.url,
+        "publish_date": post.publish_date,
+        "converted_at": datetime.now(timezone.utc).astimezone().isoformat(),
+        "description": _social_description(post),
+        "platform": platform,
+        "video_url": post.video_url,
+        "backend": platform,
+    }
+    meta = normalize_meta(meta, args.url, label)
+    meta["tags"] = ["web2md", label]
+    meta["aliases"] = [title]
+
+    with open(md_path, "w", encoding="utf-8") as f:
+        f.write("---\n")
+        f.write(yaml.dump(meta, allow_unicode=True, default_flow_style=False,
+                          sort_keys=False).strip())
+        f.write("\n---\n\n")
+        f.write("\n\n".join(p for p in parts if p.strip()))
+        f.write("\n")
+
+    if args.conversion_log:
+        append_conversion_record(args.conversion_log, meta, md_path, img_count,
+                                 platform, label)
+
+    print(f"DONE: {md_path}", file=sys.stderr)
+    print(f"Title: {title}", file=sys.stderr)
+    if post.author:
+        print(f"Author: {post.author}", file=sys.stderr)
+    print(f"Images: {img_count} downloaded", file=sys.stderr)
+    if post.video_url:
+        print("Video: 1", file=sys.stderr)
+
+
+def _social_description(post: "Post") -> str:
+    text = re.sub(r"\s+", " ", post.text).strip()
+    return text[:120]
+
+
+def _try_transcribe(video_url: str, args) -> str:
+    """转写 + 摘要。任何一步失败都降级为仅保留视频地址，不中断转换。"""
+    try:
+        t = transcribe(video_url, model=args.asr_model, language=args.language,
+                       timeout=max(args.timeout * 20, 300))
+    except AsrError as e:
+        print(f"WARNING: 转写跳过 — {e}", file=sys.stderr)
+        return ""
+    if not t.ok:
+        print("WARNING: 转写结果为空", file=sys.stderr)
+        return ""
+
+    blocks = ["## 逐字稿", render_transcript(t)]
+    try:
+        blocks.insert(0, summarize(t.text))
+    except AsrError as e:
+        print(f"WARNING: 摘要生成失败，仅保留逐字稿 — {e}", file=sys.stderr)
+    print(f"Transcript: {len(t.text)} 字", file=sys.stderr)
+    return "\n\n".join(blocks)
+
+
 def main() -> None:
     args = parse_args()
+
+    # 小红书/抖音分享文案是「文字 + 链接」混合，先抠出链接
+    args.url = extract_first_url(args.url) or args.url.strip()
 
     parsed = urlparse(args.url)
     if parsed.scheme not in ("http", "https"):
@@ -651,6 +830,11 @@ def main() -> None:
         except OSError as e:
             print(f"ERROR: Cannot write to {output_dir} — {e}", file=sys.stderr)
             sys.exit(5)
+
+    platform = detect_platform(args.url)
+    if platform in (PLATFORM_XHS, PLATFORM_DOUYIN) and args.backend != "defuddle":
+        convert_social_post(args, platform, output_dir)
+        return
 
     use_defuddle = should_use_defuddle(args.url, args.backend)
 

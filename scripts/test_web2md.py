@@ -4,6 +4,7 @@
 RED phase: Write tests first, verify they test the right things.
 """
 
+import json
 import os
 import sys
 import tempfile
@@ -20,6 +21,13 @@ from web2md import (
     parse_args,
     append_conversion_record,
     normalize_meta,
+)
+from platforms import (
+    detect_platform,
+    douyin_video_url_from_share,
+    extract_first_url,
+    parse_douyin,
+    parse_xhs,
 )
 
 
@@ -246,6 +254,144 @@ class TestNormalizeMeta(unittest.TestCase):
         self.assertEqual(result["title"], "")
         self.assertEqual(result["author"], "")
         self.assertEqual(result["description"], "")
+
+
+class TestPlatformDetection(unittest.TestCase):
+    def test_detect_platforms(self):
+        """各平台域名识别正确"""
+        cases = {
+            "https://www.xiaohongshu.com/explore/abc": "xiaohongshu",
+            "https://xhslink.com/a/xyz": "xiaohongshu",
+            "https://v.douyin.com/abc/": "douyin",
+            "https://www.douyin.com/note/7281234567890123456": "douyin",
+            "https://mp.weixin.qq.com/s/abc": "wechat",
+            "https://example.com/a": "generic",
+        }
+        for url, expected in cases.items():
+            self.assertEqual(detect_platform(url), expected, url)
+
+    def test_extract_url_from_share_text(self):
+        """分享文案里抠链接，且不吞后面的中文"""
+        text = "3.15 复制打开抖音，看看【某某】https://v.douyin.com/abc/ 的作品"
+        self.assertEqual(extract_first_url(text), "https://v.douyin.com/abc/")
+        self.assertEqual(extract_first_url("没有链接"), "")
+
+
+class TestXhsParser(unittest.TestCase):
+    HTML_TMPL = (
+        '<html><script>window.__INITIAL_STATE__ = {"note":{"noteDetailMap":{"n1":'
+        '{"note":{"title":"%(title)s","desc":"%(desc)s","time":1700000000000,'
+        '"user":{"nickname":"%(nick)s"},"imageList":%(imgs)s%(video)s}}}}}</script></html>'
+    )
+
+    def _build(self, imgs, video="", title="标题", desc="正文", nick="作者"):
+        return self.HTML_TMPL % {
+            "title": title, "desc": desc, "nick": nick,
+            "imgs": json.dumps(imgs, ensure_ascii=False), "video": video,
+        }
+
+    def test_live_photo_with_clip(self):
+        """实况照片识别 + 片段地址归一化为 https"""
+        html = self._build([{
+            "urlDefault": "http://img1.jpg", "livePhoto": True,
+            "stream": {"h264": [{"masterUrl": "http://vid1.mp4"}]},
+        }])
+        post = parse_xhs(html, "u")
+        self.assertEqual(len(post.images), 1)
+        self.assertEqual(post.images[0].kind, "livePhoto")
+        self.assertEqual(post.images[0].motion_url, "https://vid1.mp4")
+        self.assertEqual(post.images[0].url, "https://img1.jpg")
+
+    def test_live_photo_without_clip_falls_back_to_still(self):
+        """有 livePhoto 标记但取不到片段 → 退回静态图"""
+        html = self._build([{"urlDefault": "http://img1.jpg", "livePhoto": True,
+                             "stream": {"h264": []}}])
+        post = parse_xhs(html, "u")
+        self.assertEqual(post.images[0].kind, "still")
+        self.assertIsNone(post.images[0].motion_url)
+
+    def test_live_photo_clips_are_not_note_video(self):
+        """实况片段不能被当成笔记视频（否则凭空多一个视频）"""
+        html = self._build([
+            {"urlDefault": "http://i1.jpg", "livePhoto": True,
+             "stream": {"h264": [{"masterUrl": "http://clip1.mp4"}]}},
+            {"urlDefault": "http://i2.jpg", "livePhoto": True,
+             "stream": {"h264": [{"masterUrl": "http://clip2.mp4"}]}},
+        ])
+        post = parse_xhs(html, "u")
+        self.assertEqual(len(post.images), 2)
+        self.assertEqual(post.video_url, "")
+
+    def test_real_note_video_kept(self):
+        """笔记自身视频与实况片段共存时，保留真视频"""
+        video = (',"video":{"media":{"stream":{"h264":'
+                 '[{"masterUrl":"http://real.mp4"}]}}}')
+        html = self._build([{"urlDefault": "http://i1.jpg", "livePhoto": True,
+                             "stream": {"h264": [{"masterUrl": "http://clip1.mp4"}]}}],
+                           video=video)
+        post = parse_xhs(html, "u")
+        self.assertEqual(post.video_url, "https://real.mp4")
+
+    def test_no_media_returns_none(self):
+        """登录墙/壳页（无任何媒体）必须返回 None，不能冒充成功"""
+        html = self._build([])
+        self.assertIsNone(parse_xhs(html, "u"))
+
+    def test_undefined_in_state_is_tolerated(self):
+        """页面状态里混有 JS undefined 时仍能解析"""
+        html = ('<html><script>window.__INITIAL_STATE__ = {"a":undefined,'
+                '"note":{"noteDetailMap":{"n1":{"note":{"title":"t","desc":"d",'
+                '"imageList":[{"urlDefault":"http://i.jpg"}]}}}}}</script></html>')
+        post = parse_xhs(html, "u")
+        self.assertEqual(post.title, "t")
+        self.assertEqual(len(post.images), 1)
+
+
+class TestDouyinParser(unittest.TestCase):
+    def test_image_post_does_not_produce_video(self):
+        """图文的 video.play_addr 是背景音乐壳子，不能产出视频"""
+        post = parse_douyin({
+            "desc": "图文标题",
+            "images": [{"url_list": ["https://p/1.jpg"]},
+                       {"url_list": ["https://p/2.jpg"]}],
+            "video": {"play_addr": {"url_list": ["https://v/bgm.mp3"]}},
+        }, "u")
+        self.assertEqual(post.video_url, "")
+        self.assertEqual(len(post.images), 2)
+
+    def test_video_post_produces_video(self):
+        post = parse_douyin({
+            "desc": "视频标题",
+            "video": {"play_addr": {"url_list": ["https://v/v.mp4"]}},
+        }, "u")
+        self.assertEqual(post.video_url, "https://v/v.mp4")
+
+    def test_gallery_item_kinds(self):
+        """实况 / 独立片段 / 静态图三分类"""
+        post = parse_douyin({
+            "desc": "混合",
+            "images": [
+                {"url_list": ["https://p/0.webp"], "live_photo_type": 1,
+                 "video": {"bit_rate": [{"play_addr": {"url_list": ["https://v/live0.mp4"]}}]}},
+                {"url_list": ["https://p/1.webp"], "clip_type": 4,
+                 "video": {"bit_rate": [{"play_addr": {"url_list": ["https://v/clip1.mp4"]}}]}},
+                {"url_list": ["https://p/2.webp"]},
+            ],
+        }, "u")
+        self.assertEqual([i.kind for i in post.images],
+                         ["livePhoto", "videoClip", "still"])
+        self.assertIsNone(post.images[2].motion_url)
+
+    def test_empty_detail_returns_none(self):
+        self.assertIsNone(parse_douyin({}, "u"))
+
+    def test_note_url_rewritten_to_video(self):
+        """/note/{id} 必须改写成 /video/{id} 才会触发详情接口"""
+        url = "https://www.douyin.com/note/7281234567890123456"
+        self.assertEqual(douyin_video_url_from_share(url),
+                         "https://www.douyin.com/video/7281234567890123456")
+        unchanged = "https://www.douyin.com/video/7281234567890123456"
+        self.assertEqual(douyin_video_url_from_share(unchanged), unchanged)
 
 
 if __name__ == "__main__":

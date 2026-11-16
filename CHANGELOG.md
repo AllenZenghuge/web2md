@@ -17,6 +17,7 @@
 | 2026-06-24 09:42 | v1.3.4 | **wikilink 表格兼容**：转换记录 wikilink 从 `[[文件名\|显示文本]]` 改为 `[[文件名]]`，修复表格中 `\|` 冲突 |
 | 2026-06-24 10:42 | v1.3.5 | **description 属性 + 全局 6 属性铁律**：frontmatter 新增 `description`；全局规则从 5→6 属性；planning-with-files 同步更新 |
 | 2026-06-24 15:01 | v1.3.6 | **YAML 写入校验**：`normalize_meta()` 增加 aliases/tags 非空保护；SKILL.md 新增 AI 后处理校验步骤（引号冲突、重复 key、空值检查）；README 输出结构同步 |
+| 2026-11-16 17:40 | v1.4.0 | **小红书 / 抖音支持**：新增 `platforms.py`（纯解析）、`social.py`（浏览器抓取）、`asr.py`（DashScope 转写）、`ocr.py` + `ocr.swift`（macOS Vision 图片文字识别）；自动识别平台并抓取图文/视频；抖音短链 `/note/` 自动改写 `/video/` 触发详情接口；图集按实况/片段/静态图三分类；TDD 扩展至 28 用例 |
 
 ---
 

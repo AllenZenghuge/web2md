@@ -37,6 +37,8 @@ web2md 支持两个后端，**根据 URL 类型自动选择**，无需用户指�
 | URL 类型 | 后端 | 原因 |
 |----------|------|------|
 | `mp.weixin.qq.com` | **Playwright** | 需要 `#js_content` DOM 提取 + 滚动懒加载 |
+| `xiaohongshu.com` / `xhslink.com` | **Playwright** | 解析 `__INITIAL_STATE__` 取图集/视频 |
+| `douyin.com` / `iesdouyin.com` | **Playwright** | 需桌面 UA + 拦截 `aweme/detail` 接口 |
 | `.md` 结尾的 URL | **Playwright** | 原始 Markdown 文件无需清洗 |
 | 其他所有网页 | **defuddle** | 更快、更轻、token 更少 |
 
@@ -94,12 +96,17 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 
 | 参数 | 说明 |
 |------|------|
-| `url` | 必填，文章/网页链接 |
+| `url` | 必填，文章/网页链接；小红书、抖音可直接贴整段分享文案 |
 | `--output-dir DIR` | 输出目录，默认当前目录 |
 | `--no-images` | 跳过图片下载，保留原始 URL |
 | `--timeout SEC` | 页面加载超时，默认 30 秒 |
 | `--backend` | 后端选择：`auto`（默认自动路由）、`playwright`（强制浏览器）、`defuddle`（强制轻量 CLI） |
 | `--conversion-log PATH` | 转换记录文件路径（追加写入）。固定指向 vault 中的 `web2md/转换记录.md` |
+| `--save-video` | 小红书/抖音：把视频与实况片段一起下载到本地 |
+| `--no-transcript` | 小红书/抖音：跳过语音转写（不生成逐字稿与摘要） |
+| `--no-ocr` | 小红书/抖音：跳过图片文字提取 |
+| `--asr-model` | DashScope 转写模型，默认 `paraformer-v2` |
+| `--language` | 转写语言提示，默认 `zh` |
 
 ## Frontmatter 字段
 
@@ -151,6 +158,25 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 5. 输出带 YAML frontmatter 的 `.md` 文件
 6. AI 后处理：生成 4 个相关 tag + 精炼 alias，更新 frontmatter
 
+### 小红书 / 抖音 后端
+1. **小红书**：打开笔记页，解析 `window.__INITIAL_STATE__` 里的
+   `note.noteDetailMap[].note`，取 `title` / `desc` / `user.nickname` / `imageList`；
+   图集项按 `livePhoto` + `stream.h264[0].masterUrl` 判定实况照片。
+   注意页面状态里混有 JS 的 `undefined`，`json.loads` 前要替换成 `null`。
+2. **抖音**：必须用桌面 Chrome UA（移动 UA 只会拿到「打开 App」引导页）。
+   注入 JS hook `fetch` / `XMLHttpRequest` 拦截 `aweme/detail` 响应；
+   短链跳转后若落在 `/note/{id}`，要按作品 ID 改写成 `/video/{id}` 才会触发详情接口。
+   图集项按 `live_photo_type == 1` → 实况，`video.bit_rate[0].play_addr` → 独立片段，
+   其余为静态图；**图集非空时绝不产出顶层视频**（`video.play_addr` 是背景音乐壳子）。
+3. 下载图片/视频（抖音 CDN 必须带 `Referer: https://www.douyin.com/`）
+4. **图片文字提取**：调用 macOS Vision OCR（`ocr.swift` 首次运行时编译并缓存），
+   识别结果以引用块挂在对应图片下方。不依赖任何在线模型。
+5. 有视频时可选 DashScope Paraformer 转写 + 摘要（`--no-transcript` 关闭）
+
+> [!warning] 登录态
+> 小红书对未登录请求会重定向到 `/login`，此时脚本会明确报错并退出码 6。
+> 目前不支持 Cookie 注入，需要登录态的笔记无法抓取。
+
 ## 前置依赖
 
 - **Playwright 后端**：Python 3.9+、Google Chrome、Playwright（`pip install playwright`）
@@ -189,6 +215,7 @@ Markdown 中图片引用使用 **vault 根相对路径**：`web2md/images/文章
 | 3 | Chrome/Playwright 不可用 |
 | 4 | 网络不可达 |
 | 5 | 输出目录写入失败 |
+| 6 | 小红书/抖音未提取到任何内容（登录墙 / 已删除 / 结构变更） |
 
 ## 安装（首次使用）
 
