@@ -1,7 +1,7 @@
-"""DashScope 语音转写 + 摘要。
+"""DashScope 语音转写。
 
-转写走 Paraformer 录音文件识别（异步三步：提交 → 轮询 → 下载结果），
-摘要走 OpenAI 兼容接口的 Qwen。
+转写走 Paraformer 录音文件识别（异步三步：提交 → 轮询 → 下载结果）。
+不使用任何千问（Qwen）模型：摘要由对话模型生成后写回 md。
 """
 
 from __future__ import annotations
@@ -17,12 +17,6 @@ import requests
 ASR_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcription"
 TASK_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
 DEFAULT_ASR_MODEL = "paraformer-v2"
-
-LLM_BASE_URL = os.environ.get(
-    "WEB2MD_LLM_BASE_URL",
-    "https://ws-udt9j53khqthrs7z.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
-)
-LLM_MODEL = os.environ.get("WEB2MD_LLM_MODEL", "qwen3.7-max-2026-06-08")
 
 
 class AsrError(RuntimeError):
@@ -161,55 +155,3 @@ def render_transcript(t: Transcript) -> str:
     if t.sentences:
         return "\n\n".join(f"**[{s['begin']}]** {s['text']}" for s in t.sentences)
     return t.text
-
-
-# ── 摘要（主题 / 主要内容 / 关键结论）────────────────────────────────
-
-SUMMARY_PROMPT = """你是内容分析助手。下面是小红书/抖音视频的逐字稿，请输出四部分：
-
-1. 主题：一句话说明这条内容讲什么（不超过 30 字）
-2. 主要内容：3-6 条要点，每条一句话
-3. 关键结论：2-4 条，只写作者明确表达的结论或建议；逐字稿里没有就写「无明显结论」
-
-严格用下面的 Markdown 格式输出，不要加额外说明：
-
-## 主题
-<一句话>
-
-## 主要内容
-- <要点>
-
-## 关键结论
-- <结论>
-
-逐字稿：
-"""
-
-
-def summarize(transcript: str, *, timeout: int = 120) -> str:
-    """调 Qwen 生成摘要。失败抛 AsrError，由调用方决定是否降级。"""
-    if not transcript.strip():
-        raise AsrError("逐字稿为空，无法生成摘要")
-
-    key = _api_key()
-    payload = {
-        "model": LLM_MODEL,
-        "messages": [{"role": "user", "content": SUMMARY_PROMPT + transcript[:20000]}],
-        "temperature": 0.3,
-    }
-    try:
-        resp = requests.post(
-            f"{LLM_BASE_URL.rstrip('/')}/chat/completions",
-            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-            json=payload, timeout=timeout,
-        )
-    except requests.RequestException as e:
-        raise AsrError(f"摘要生成失败：{e}") from e
-
-    if resp.status_code != 200:
-        raise AsrError(f"摘要生成失败（HTTP {resp.status_code}）：{resp.text[:300]}")
-
-    try:
-        return resp.json()["choices"][0]["message"]["content"].strip()
-    except (KeyError, IndexError, ValueError) as e:
-        raise AsrError(f"摘要响应结构异常：{e}") from e

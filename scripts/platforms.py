@@ -55,7 +55,8 @@ def detect_platform(url: str) -> str:
     host = (urlparse(url).hostname or "").lower()
     if host.endswith("mp.weixin.qq.com"):
         return PLATFORM_WECHAT
-    if host.endswith("xiaohongshu.com") or host.endswith("xhslink.com"):
+    if host.endswith("xiaohongshu.com") or host.endswith("xhslink.com") \
+            or host.endswith("xhslink.cn"):
         return PLATFORM_XHS
     if host.endswith("douyin.com") or host.endswith("iesdouyin.com"):
         return PLATFORM_DOUYIN
@@ -208,7 +209,19 @@ def _xhs_note_from_regex(html: str) -> Optional[dict]:
     m_time = re.search(r'"time"\s*:\s*(\d{13})', html)
     return {"title": title, "desc": desc, "user": {"nickname": nickname},
             "imageList": image_list,
-            "time": int(m_time.group(1)) if m_time else None}
+            "time": int(m_time.group(1)) if m_time else None,
+            "_masterUrls": _all_master_urls(html)}
+
+
+def _all_master_urls(html: str) -> list[str]:
+    """全文所有 masterUrl，按出现顺序。图集实况片段也是 masterUrl，
+    由 _xhs_note_video 负责排除，所以这里要取全部而不是第一个。"""
+    out: list[str] = []
+    for m in re.finditer(r'"masterUrl"\s*:\s*"((?:[^"\\]|\\.)*)"', html):
+        url = normalize_to_https(unescape_json_str(m.group(1)))
+        if url and url not in out:
+            out.append(url)
+    return out
 
 
 def _first_json_string(text: str, key: str) -> str:
@@ -274,6 +287,11 @@ def _xhs_note_video(note: dict, images: list[MediaItem]) -> tuple[str, str]:
             raw = normalize_to_https(unescape_json_str(v.get("masterUrl") or ""))
             if raw and raw not in clip_urls:
                 return raw, _xhs_cover(note, images)
+
+    # 移动端分享页没有 video.media 结构，退到全文 masterUrl 列表里挑
+    for raw in note.get("_masterUrls") or []:
+        if raw not in clip_urls:
+            return raw, _xhs_cover(note, images)
     return "", ""
 
 

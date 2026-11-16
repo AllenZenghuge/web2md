@@ -20,12 +20,14 @@ from markdownify import markdownify as md_convert
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from readability import Document
 
-from asr import AsrError, render_transcript, summarize, transcribe
+from asr import AsrError, render_transcript, transcribe
 from ocr import ocr_images
 from ocr import render_markdown as render_ocr
 from platforms import (
+    DOUYIN_DESKTOP_UA,
     PLATFORM_DOUYIN,
     PLATFORM_XHS,
+    XHS_MOBILE_UA,
     detect_platform,
     extract_first_url,
 )
@@ -179,12 +181,6 @@ def parse_args() -> argparse.Namespace:
         "--no-ocr",
         action="store_true",
         help="小红书/抖音：跳过图片文字提取（默认识别图片中的文字）",
-    )
-    parser.add_argument(
-        "--auto-summary",
-        action="store_true",
-        help="小红书/抖音：用 DashScope LLM 自动生成主题/主要内容/关键结论"
-             "（默认不调模型，由人工或对话模型补充）",
     )
     parser.add_argument(
         "--asr-model",
@@ -466,13 +462,17 @@ def _clean_img_attrs(tag) -> None:
 # ── Shared image download core ──────────────────────────────────────
 
 def _download_single_image(img_url: str, page_url: str, img_dir: Path,
-                           count: int) -> tuple:
+                           count: int, user_agent: str = "",
+                           referer: str = "") -> tuple:
     """Download one image, return (local_filename, succeeded).
     Shared by both HTML and Markdown image pipelines.
+
+    user_agent: 小红书 CDN 的 !h5_ 变体只认移动 UA，桌面 UA 会 403。
+    referer: 小红书/抖音 CDN 只认自家主域，传短链域名会 403。
     """
     headers = {
-        "Referer": page_url,
-        "User-Agent": (
+        "Referer": referer or page_url,
+        "User-Agent": user_agent or (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
             "Chrome/148.0.0.0 Safari/537.36"
@@ -709,13 +709,18 @@ def convert_social_post(args, platform: str, output_dir: Path) -> None:
 
     img_count = 0
     downloaded: list[tuple[int, str, Path]] = []
+    platform_ua = XHS_MOBILE_UA if platform == PLATFORM_XHS else DOUYIN_DESKTOP_UA
+    platform_referer = ("https://www.xiaohongshu.com/" if platform == PLATFORM_XHS
+                        else "https://www.douyin.com/")
     if post.images:
         if args.no_images:
             parts.extend(f"![图片]({i.url})" for i in post.images)
         else:
             img_dir.mkdir(parents=True, exist_ok=True)
             for idx, item in enumerate(post.images, 1):
-                filename, ok = _download_single_image(item.url, args.url, img_dir, idx)
+                filename, ok = _download_single_image(
+                    item.url, args.url, img_dir, idx,
+                    user_agent=platform_ua, referer=platform_referer)
                 if ok:
                     img_count += 1
                     downloaded.append((idx, filename, img_dir / filename))
@@ -809,11 +814,6 @@ def _try_transcribe(video_url: str, args) -> str:
         return ""
 
     blocks = ["## 逐字稿", render_transcript(t)]
-    if getattr(args, "auto_summary", False):
-        try:
-            blocks.insert(0, summarize(t.text))
-        except AsrError as e:
-            print(f"WARNING: 摘要生成失败，仅保留逐字稿 — {e}", file=sys.stderr)
     print(f"Transcript: {len(t.text)} 字", file=sys.stderr)
     return "\n\n".join(blocks)
 

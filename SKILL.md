@@ -37,7 +37,7 @@ web2md 支持两个后端，**根据 URL 类型自动选择**，无需用户指�
 | URL 类型 | 后端 | 原因 |
 |----------|------|------|
 | `mp.weixin.qq.com` | **Playwright** | 需要 `#js_content` DOM 提取 + 滚动懒加载 |
-| `xiaohongshu.com` / `xhslink.com` | **Playwright** | 解析 `__INITIAL_STATE__` 取图集/视频 |
+| `xiaohongshu.com` / `xhslink.com` / `xhslink.cn` | **Playwright** | 移动 UA + 解析分享页状态取图集/视频 |
 | `douyin.com` / `iesdouyin.com` | **Playwright** | 需桌面 UA + 拦截 `aweme/detail` 接口 |
 | `.md` 结尾的 URL | **Playwright** | 原始 Markdown 文件无需清洗 |
 | 其他所有网页 | **defuddle** | 更快、更轻、token 更少 |
@@ -104,7 +104,6 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 | `--conversion-log PATH` | 转换记录文件路径（追加写入）。固定指向 vault 中的 `web2md/转换记录.md` |
 | `--save-video` | 小红书/抖音：把视频与实况片段一起下载到本地 |
 | `--no-transcript` | 小红书/抖音：跳过语音转写（不生成逐字稿与摘要） |
-| `--auto-summary` | 小红书/抖音：用 DashScope LLM 自动生成主题/主要内容/关键结论（默认不调模型） |
 | `--no-ocr` | 小红书/抖音：跳过图片文字提取 |
 | `--asr-model` | DashScope 转写模型，默认 `paraformer-v2` |
 | `--language` | 转写语言提示，默认 `zh` |
@@ -170,10 +169,15 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
    短链跳转后若落在 `/note/{id}`，要按作品 ID 改写成 `/video/{id}` 才会触发详情接口。
    图集项按 `live_photo_type == 1` → 实况，`video.bit_rate[0].play_addr` → 独立片段，
    其余为静态图；**图集非空时绝不产出顶层视频**（`video.play_addr` 是背景音乐壳子）。
-3. 下载图片/视频（抖音 CDN 必须带 `Referer: https://www.douyin.com/`）
+3. 下载图片/视频
+   - **小红书 CDN**：`!h5_` 变体只认**移动 UA**，且 Referer 必须是
+     `https://www.xiaohongshu.com/`（传短链域名 `xhslink.cn` 会 403）
+   - **抖音 CDN**：Referer 必须是 `https://www.douyin.com/`，否则 403
 4. **图片文字提取**：调用 macOS Vision OCR（`ocr.swift` 首次运行时编译并缓存），
    识别结果以引用块挂在对应图片下方。不依赖任何在线模型。
-5. 有视频时可选 DashScope Paraformer 转写 + 摘要（`--no-transcript` 关闭）
+5. 有视频时用 DashScope Paraformer 转写逐字稿（`--no-transcript` 关闭）。
+   **摘要（主题/主要内容/关键结论）由对话模型生成后写回 md，脚本不调用任何
+   LLM**。
 
 > [!warning] 登录态
 > 小红书对未登录请求会重定向到 `/login`，此时脚本会明确报错并退出码 6。
