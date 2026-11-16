@@ -68,6 +68,10 @@ def _fetch_xhs(url: str, page_timeout: int) -> Optional[Post]:
             post = parse_xhs(resp.text, url)
             if post:
                 return post
+            if "仅支持在小红书" in resp.text or "打开 APP 查看" in resp.text:
+                print("ERROR: 该笔记仅支持在小红书 App 内查看，网页端无法获取。",
+                      file=sys.stderr)
+                return None
             if "/login" in resp.url or "登录后推荐更懂你的笔记" in resp.text:
                 print("ERROR: 小红书要求登录后才能查看该笔记（被重定向到登录页）。",
                       file=sys.stderr)
@@ -83,7 +87,12 @@ def _fetch_xhs(url: str, page_timeout: int) -> Optional[Post]:
             print("ERROR: 小红书要求登录后才能查看该笔记（页面被重定向到登录页）。\n"
                   "       当前无登录态，无法抓取。", file=sys.stderr)
             return None
-        post = parse_xhs(page.content(), url)
+        html = page.content()
+        if "仅支持在小红书" in html or "打开 APP 查看" in html:
+            print("ERROR: 该笔记仅支持在小红书 App 内查看，网页端无法获取。",
+                  file=sys.stderr)
+            return None
+        post = parse_xhs(html, url)
         if post is None:
             print(f"ERROR: 小红书页面未提取到任何媒体（最终 URL: {page.url[:120]}）。\n"
                   "       可能是笔记已删除、需要登录，或页面结构已变更。", file=sys.stderr)

@@ -692,8 +692,7 @@ def convert_social_post(args, platform: str, output_dir: Path) -> None:
 
     post = fetch_social_post(args.url, platform, timeout=max(args.timeout, 40))
     if post is None:
-        print("ERROR: 未提取到任何内容。可能是登录墙、反爬壳页，或笔记已删除。",
-              file=sys.stderr)
+        # 具体原因由抓取层打印（登录墙 / 仅 App 内查看 / 结构变更 / 已删除）
         sys.exit(6)
 
     title = post.title or "未命名"
