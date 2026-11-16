@@ -181,6 +181,12 @@ def parse_args() -> argparse.Namespace:
         help="小红书/抖音：跳过图片文字提取（默认识别图片中的文字）",
     )
     parser.add_argument(
+        "--auto-summary",
+        action="store_true",
+        help="小红书/抖音：用 DashScope LLM 自动生成主题/主要内容/关键结论"
+             "（默认不调模型，由人工或对话模型补充）",
+    )
+    parser.add_argument(
         "--asr-model",
         default="paraformer-v2",
         help="DashScope 转写模型（默认 paraformer-v2）",
@@ -804,10 +810,11 @@ def _try_transcribe(video_url: str, args) -> str:
         return ""
 
     blocks = ["## 逐字稿", render_transcript(t)]
-    try:
-        blocks.insert(0, summarize(t.text))
-    except AsrError as e:
-        print(f"WARNING: 摘要生成失败，仅保留逐字稿 — {e}", file=sys.stderr)
+    if getattr(args, "auto_summary", False):
+        try:
+            blocks.insert(0, summarize(t.text))
+        except AsrError as e:
+            print(f"WARNING: 摘要生成失败，仅保留逐字稿 — {e}", file=sys.stderr)
     print(f"Transcript: {len(t.text)} 字", file=sys.stderr)
     return "\n\n".join(blocks)
 

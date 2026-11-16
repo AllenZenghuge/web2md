@@ -104,6 +104,7 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 | `--conversion-log PATH` | 转换记录文件路径（追加写入）。固定指向 vault 中的 `web2md/转换记录.md` |
 | `--save-video` | 小红书/抖音：把视频与实况片段一起下载到本地 |
 | `--no-transcript` | 小红书/抖音：跳过语音转写（不生成逐字稿与摘要） |
+| `--auto-summary` | 小红书/抖音：用 DashScope LLM 自动生成主题/主要内容/关键结论（默认不调模型） |
 | `--no-ocr` | 小红书/抖音：跳过图片文字提取 |
 | `--asr-model` | DashScope 转写模型，默认 `paraformer-v2` |
 | `--language` | 转写语言提示，默认 `zh` |
@@ -159,9 +160,10 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 6. AI 后处理：生成 4 个相关 tag + 精炼 alias，更新 frontmatter
 
 ### 小红书 / 抖音 后端
-1. **小红书**：打开笔记页，解析 `window.__INITIAL_STATE__` 里的
-   `note.noteDetailMap[].note`，取 `title` / `desc` / `user.nickname` / `imageList`；
-   图集项按 `livePhoto` + `stream.h264[0].masterUrl` 判定实况照片。
+1. **小红书**：**必须用移动端 UA**（桌面 UA 会被重定向到登录页）。
+   优先直连 HTTP 取 HTML，失败再用浏览器。两种页面结构都要兼容：
+   - 桌面/状态对象：`note.noteDetailMap[].note`，图片字段 `urlDefault`，作者 `user.nickname`
+   - 移动分享页：字段平铺，图片字段 `url`，作者 `user.nickName`（大写 N）
    注意页面状态里混有 JS 的 `undefined`，`json.loads` 前要替换成 `null`。
 2. **抖音**：必须用桌面 Chrome UA（移动 UA 只会拿到「打开 App」引导页）。
    注入 JS hook `fetch` / `XMLHttpRequest` 拦截 `aweme/detail` 响应；

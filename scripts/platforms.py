@@ -184,10 +184,18 @@ def _xhs_note_object(html: str) -> Optional[dict]:
 
 
 def _xhs_note_from_regex(html: str) -> Optional[dict]:
-    """状态对象取不到时的兜底：只用平铺字段拼一个伪 note。"""
+    """状态对象取不到时的兜底：只用平铺字段拼一个伪 note。
+
+    移动端分享页走这条路径：没有 noteDetailMap，字段是平铺的，
+    且作者字段是 nickName（大写 N），图片字段是 url（不是 urlDefault）。
+    """
     desc = _first_json_string(html, "desc")
-    nickname = _first_json_string(html, "nickname")
+    nickname = _first_json_string(html, "nickName") or _first_json_string(html, "nickname")
     title = _first_json_string(html, "title")
+    if not title:
+        m = re.search(r"<title>([^<]+)</title>", html)
+        if m:
+            title = re.sub(r"\s*-\s*小红书\s*$", "", m.group(1)).strip()
     imgs = _slice_after_key(html, "imageList", "[")
     image_list = []
     if imgs:
@@ -197,8 +205,10 @@ def _xhs_note_from_regex(html: str) -> Optional[dict]:
             image_list = []
     if not any((desc, nickname, title, image_list)):
         return None
+    m_time = re.search(r'"time"\s*:\s*(\d{13})', html)
     return {"title": title, "desc": desc, "user": {"nickname": nickname},
-            "imageList": image_list}
+            "imageList": image_list,
+            "time": int(m_time.group(1)) if m_time else None}
 
 
 def _first_json_string(text: str, key: str) -> str:
@@ -216,13 +226,17 @@ def _slice_after_key(text: str, key: str, open_ch: str) -> Optional[str]:
 
 def _xhs_images(image_list: list) -> list[MediaItem]:
     """图集解析。必须先解析 JSON 再关联字段，正则无法把 urlDefault /
-    livePhoto / masterUrl 三个字段对应到同一张图。"""
+    livePhoto / masterUrl 三个字段对应到同一张图。
+
+    桌面端用 urlDefault，移动端分享页用 url，两者都要认。
+    """
     items: list[MediaItem] = []
     seen: set[str] = set()
     for entry in image_list[:MAX_IMAGES]:
         if not isinstance(entry, dict):
             continue
-        url = normalize_to_https(unescape_json_str(entry.get("urlDefault") or ""))
+        raw = entry.get("urlDefault") or entry.get("url") or ""
+        url = normalize_to_https(unescape_json_str(raw))
         if not url or url in seen:
             continue
         seen.add(url)
@@ -376,6 +390,12 @@ def _first_url(container: dict) -> str:
 DOUYIN_DESKTOP_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+)
+
+# 小红书对桌面 UA 会重定向到登录页，移动 UA 才直接返回带数据的分享页。
+XHS_MOBILE_UA = (
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 "
+    "(KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 )
 
 # 桌面 UA 才会进 PC 版页面并调用 aweme/detail；移动 UA 只会落到

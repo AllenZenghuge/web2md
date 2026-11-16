@@ -19,6 +19,7 @@ from platforms import (
     DOUYIN_HOOK_JS,
     PLATFORM_XHS,
     Post,
+    XHS_MOBILE_UA,
     douyin_video_url_from_share,
     parse_douyin,
     parse_xhs,
@@ -53,16 +54,35 @@ def fetch_social_post(url: str, platform: str, timeout: int = 40,
 
 
 def _fetch_xhs(url: str, page_timeout: int) -> Optional[Post]:
-    playwright, browser, page = _launch_browser(DOUYIN_DESKTOP_UA)
+    """小红书：优先直连 HTTP（移动 UA 会直接返回带数据的分享页），失败再用浏览器。
+
+    桌面 UA 会被重定向到登录页，所以全程用移动 UA。
+    """
+    try:
+        resp = requests.get(
+            url,
+            headers={"User-Agent": XHS_MOBILE_UA, "Referer": "https://www.xiaohongshu.com/"},
+            timeout=page_timeout, allow_redirects=True,
+        )
+        if resp.status_code == 200:
+            post = parse_xhs(resp.text, url)
+            if post:
+                return post
+            if "/login" in resp.url or "登录后推荐更懂你的笔记" in resp.text:
+                print("ERROR: 小红书要求登录后才能查看该笔记（被重定向到登录页）。",
+                      file=sys.stderr)
+                return None
+    except requests.RequestException as e:
+        print(f"WARNING: 小红书直连失败（{e}），改用浏览器重试", file=sys.stderr)
+
+    playwright, browser, page = _launch_browser(XHS_MOBILE_UA)
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=page_timeout * 1000)
         page.wait_for_timeout(3000)
-
         if "/login" in page.url:
             print("ERROR: 小红书要求登录后才能查看该笔记（页面被重定向到登录页）。\n"
                   "       当前无登录态，无法抓取。", file=sys.stderr)
             return None
-
         post = parse_xhs(page.content(), url)
         if post is None:
             print(f"ERROR: 小红书页面未提取到任何媒体（最终 URL: {page.url[:120]}）。\n"
