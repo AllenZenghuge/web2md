@@ -431,5 +431,53 @@ class TestLocalAsr(unittest.TestCase):
             self.assertTrue(why)
 
 
+class TestDuplicateCheck(unittest.TestCase):
+    """v1.7.1: 同一个来源转过就跳过，并回显旧结果"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self.wrapper = Path(self.tmpdir) / "web2md"
+        self.wrapper.mkdir()
+
+    def tearDown(self):
+        import shutil
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def _write(self, name, url):
+        (self.wrapper / name).write_text(
+            f"---\ntitle: 测试标题\nsource_url: {url}\n"
+            "converted_at: '2026-11-17T10:00:00+08:00'\n---\n",
+            encoding="utf-8")
+
+    def test_hit_same_url(self):
+        """同一个 source_url 命中，且带回标题和路径"""
+        from web2md import find_converted
+        self._write("a.md", "https://v.douyin.com/ABC/")
+        hit = find_converted("https://v.douyin.com/ABC", Path(self.tmpdir))
+        self.assertEqual(hit["title"], "测试标题")
+        self.assertTrue(hit["path"].endswith("a.md"))
+
+    def test_ignore_query_and_scheme(self):
+        """query 参数和协议差异不算不同来源"""
+        from web2md import find_converted
+        self._write("b.md", "http://example.com/post")
+        hit = find_converted("https://example.com/post?utm_source=x", Path(self.tmpdir))
+        self.assertEqual(hit["title"], "测试标题")
+
+    def test_miss_different_url(self):
+        """不同 URL 不能误判为已转换"""
+        from web2md import find_converted
+        self._write("c.md", "https://v.douyin.com/AAA/")
+        self.assertEqual(find_converted("https://v.douyin.com/BBB/", Path(self.tmpdir)), {})
+
+    def test_skip_conversion_log(self):
+        """转换记录.md 里的 URL 表格不算重复命中"""
+        from web2md import find_converted
+        (self.wrapper / "转换记录.md").write_text(
+            "---\ntitle: 转换记录\nsource_url: https://v.douyin.com/ABC/\n---\n",
+            encoding="utf-8")
+        self.assertEqual(find_converted("https://v.douyin.com/ABC/", Path(self.tmpdir)), {})
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

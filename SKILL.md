@@ -52,6 +52,9 @@ web2md 支持两个后端，**根据 URL 类型自动选择**，无需用户指�
 
 ## 使用流程
 
+> [!tip] 自动查重
+> 转换前脚本会按 `source_url` 扫输出目录已有的笔记，命中就打印原文件的标题、路径、转换时间并直接退出（退出码 0），不会重复抓取、不会覆盖已整理好的笔记。要强制重转加 `--force`。
+
 1. 从用户消息中提取 URL
 2. 运行转换（后端自动选择，**始终带上转换记录路径**）：
 
@@ -109,6 +112,7 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 | `--local-asr` | 云转写失败时降级到本地 faster-whisper。需额外装可选依赖，见下面「本地转写（可选）」 |
 | `--local-asr-model` | 本地 whisper 模型尺寸：`tiny`/`base`/`small`/`medium`，默认 `small` |
 | `--vad` | 本地转写时开 VAD 静音过滤。**默认关闭**——vlog 的口播常垫在音乐上，VAD 会把整片判成非语音 |
+| `--force` | 跳过「已转换过」检查，强制重新转换 |
 
 ## Frontmatter 字段
 

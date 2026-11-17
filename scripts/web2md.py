@@ -208,6 +208,11 @@ def parse_args() -> argparse.Namespace:
         help="本地转写时开启 VAD 静音过滤。默认关闭——vlog 的口播常垫在音乐上，"
              "VAD 会把整片判成非语音，只吐出几个字的噪音",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="跳过「已转换过」检查，强制重新转换（默认会按 source_url 查已有笔记并跳过）",
+    )
     return parser.parse_args()
 
 
@@ -863,6 +868,42 @@ def _local_fallback(local_media: str, args):
         return None
 
 
+def _norm_url(u: str) -> str:
+    """URL 归一化：去协议、去尾斜杠、去 query/fragment。"""
+    u = (u or "").strip().strip("'\"").rstrip("/")
+    u = re.sub(r"^https?://", "", u)
+    u = re.sub(r"[?#].*$", "", u)
+    return u.lower()
+
+
+def find_converted(url: str, output_dir: Path) -> dict:
+    """在输出目录已有笔记里按 source_url 找同一个来源。返回 {title, path, converted_at} 或 {}。"""
+    wrapper = output_dir / "web2md"
+    if not wrapper.is_dir():
+        return {}
+    target = _norm_url(url)
+    if not target:
+        return {}
+    for md in sorted(wrapper.glob("*.md")):
+        if md.name.startswith("转换记录"):
+            continue
+        try:
+            head = md.read_text(encoding="utf-8", errors="ignore")[:3000]
+        except OSError:
+            continue
+        m = re.search(r"^source_url:\s*(.+)$", head, re.M)
+        if not m or _norm_url(m.group(1)) != target:
+            continue
+        title = re.search(r"^title:\s*(.+)$", head, re.M)
+        conv = re.search(r"^converted_at:\s*(.+)$", head, re.M)
+        return {
+            "title": title.group(1).strip().strip("'\"") if title else md.stem,
+            "path": str(md),
+            "converted_at": conv.group(1).strip().strip("'\"") if conv else "",
+        }
+    return {}
+
+
 def main() -> None:
     args = parse_args()
 
@@ -882,11 +923,22 @@ def main() -> None:
             print(f"ERROR: Cannot write to {output_dir} — {e}", file=sys.stderr)
             sys.exit(5)
 
+    if not args.force:
+        hit = find_converted(args.url, output_dir)
+        if hit:
+            print("已转换过，本次跳过。", file=sys.stderr)
+            print(f"  标题：{hit['title']}", file=sys.stderr)
+            print(f"  文件：{hit['path']}", file=sys.stderr)
+            if hit["converted_at"]:
+                print(f"  时间：{hit['converted_at']}", file=sys.stderr)
+            print(f"  来源：{args.url}", file=sys.stderr)
+            print("  确认要重转，加 --force", file=sys.stderr)
+            sys.exit(0)
+
     platform = detect_platform(args.url)
     if platform in (PLATFORM_XHS, PLATFORM_DOUYIN) and args.backend != "defuddle":
         convert_social_post(args, platform, output_dir)
         return
-
     use_defuddle = should_use_defuddle(args.url, args.backend)
 
     # ── defuddle path (fast extraction + local image download) ────
