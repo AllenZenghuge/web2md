@@ -21,8 +21,6 @@ from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeo
 from readability import Document
 
 from asr import AsrError, render_transcript, transcribe
-from ocr import ocr_images
-from ocr import render_markdown as render_ocr
 from platforms import (
     DOUYIN_DESKTOP_UA,
     PLATFORM_DOUYIN,
@@ -176,11 +174,6 @@ def parse_args() -> argparse.Namespace:
         "--no-transcript",
         action="store_true",
         help="小红书/抖音：跳过语音转写，不生成逐字稿与摘要",
-    )
-    parser.add_argument(
-        "--no-ocr",
-        action="store_true",
-        help="小红书/抖音：跳过图片文字提取（默认识别图片中的文字）",
     )
     parser.add_argument(
         "--asr-model",
@@ -690,7 +683,8 @@ def convert_social_post(args, platform: str, output_dir: Path) -> None:
     label = LABELS[platform]
     print(f"正在转换{label}（{platform} 后端）...", file=sys.stderr)
 
-    post = fetch_social_post(args.url, platform, timeout=max(args.timeout, 40))
+    post = fetch_social_post(args.url, platform, timeout=max(args.timeout, 40),
+                             page_timeout=max(args.timeout, 30))
     if post is None:
         # 具体原因由抓取层打印（登录墙 / 仅 App 内查看 / 结构变更 / 已删除）
         sys.exit(6)
@@ -727,18 +721,10 @@ def convert_social_post(args, platform: str, output_dir: Path) -> None:
                 else:
                     parts.append(f"[Image: {item.url}]")
 
-    # 图片内文字：本地 OCR，不调在线模型
-    ocr_map: dict[str, str] = {}
-    if downloaded and not args.no_ocr:
-        ocr_map = ocr_images([p for _, _, p in downloaded])
-        if ocr_map:
-            print(f"OCR: {len(ocr_map)} 张图片提取到文字", file=sys.stderr)
-
+    # 图片说明由对话模型读图后补写，脚本只留占位
     for idx, filename, _ in downloaded:
         parts.append(f"![图片]({img_rel_prefix}{filename})")
-        text = ocr_map.get(filename)
-        if text:
-            parts.append(render_ocr(text))
+        parts.append(f"> **图 {idx}**：（图片说明待补）")
 
     # 实况照片的动态片段：不下载时至少把地址留在笔记里
     clips = [i for i in post.images if i.motion_url]
@@ -769,6 +755,7 @@ def convert_social_post(args, platform: str, output_dir: Path) -> None:
         "description": _social_description(post),
         "platform": platform,
         "video_url": post.video_url,
+        "bgm": post.bgm,
         "backend": platform,
     }
     meta = normalize_meta(meta, args.url, label)

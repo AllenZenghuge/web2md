@@ -42,6 +42,7 @@ class Post:
     images: list[MediaItem] = field(default_factory=list)
     video_url: str = ""
     video_cover: str = ""
+    bgm: str = ""
 
 
 # ── URL / 文本工具 ──────────────────────────────────────────────────
@@ -334,6 +335,12 @@ def parse_douyin(detail: dict, source_url: str) -> Optional[Post]:
 
     video = detail.get("video") or {}
     cover = _first_url((video.get("cover") or {}))
+
+    music = detail.get("music") or {}
+    if music.get("title"):
+        author = (music.get("author") or "").strip()
+        post.bgm = (f"{music['title']} - {author}" if author
+                    and author not in music["title"] else music["title"])
 
     post.images = _douyin_images(detail.get("images") or [])
 

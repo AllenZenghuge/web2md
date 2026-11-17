@@ -102,9 +102,19 @@ def _fetch_xhs(url: str, page_timeout: int) -> Optional[Post]:
         playwright.stop()
 
 
+def _resolve_short_link(url: str, timeout: int) -> str:
+    """短链先用 HTTP 跟随重定向拿到真实地址，避免浏览器跳转不稳。"""
+    try:
+        resp = requests.get(url, headers={"User-Agent": DOUYIN_DESKTOP_UA},
+                            timeout=timeout, allow_redirects=True, stream=True)
+        return resp.url or url
+    except requests.RequestException:
+        return url
+
+
 def _fetch_douyin(url: str, timeout: int, page_timeout: int) -> Optional[Post]:
     """短链先重定向；落点是 /note/ 的话改写成 /video/ 才会触发详情接口。"""
-    target = douyin_video_url_from_share(url)
+    target = douyin_video_url_from_share(_resolve_short_link(url, page_timeout))
     playwright, browser, page = _launch_browser(DOUYIN_DESKTOP_UA)
     try:
         page.add_init_script(DOUYIN_HOOK_JS)
