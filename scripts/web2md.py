@@ -166,6 +166,11 @@ def parse_args() -> argparse.Namespace:
         help="Path to conversion record file (appends entry after successful conversion)",
     )
     parser.add_argument(
+        "--filename",
+        default="",
+        help="提炼后的短文件名（不含扩展名）。不传则直接用原标题",
+    )
+    parser.add_argument(
         "--save-video",
         action="store_true",
         help="小红书/抖音：把视频（及实况片段）一起下载到本地",
@@ -690,12 +695,12 @@ def convert_social_post(args, platform: str, output_dir: Path) -> None:
         sys.exit(6)
 
     title = post.title or "未命名"
-    safe_title = sanitize_filename(title)
+    safe_title = sanitize_filename(args.filename or title)
     wrapper_dir = output_dir / "web2md"
     wrapper_dir.mkdir(parents=True, exist_ok=True)
     md_path = wrapper_dir / f"{safe_title}.md"
     img_dir = wrapper_dir / "images" / safe_title
-    img_rel_prefix = f"web2md/images/{safe_title.replace(' ', '%20')}/"
+    img_rel_prefix = f"images/{safe_title.replace(' ', '%20')}/"
 
     parts: list[str] = []
     if post.text:
@@ -839,7 +844,7 @@ def main() -> None:
         md_content, meta = fetch_via_defuddle(args.url, args.timeout)
 
         title = meta.get("title", "untitled")
-        safe_title = sanitize_filename(title)
+        safe_title = sanitize_filename(args.filename or title)
 
         wrapper_dir = output_dir / "web2md"
         wrapper_dir.mkdir(parents=True, exist_ok=True)
@@ -848,7 +853,7 @@ def main() -> None:
 
         # Download images referenced in markdown
         img_dir = wrapper_dir / "images" / safe_title
-        img_rel_prefix = f"web2md/images/{safe_title.replace(' ', '%20')}/"
+        img_rel_prefix = f"images/{safe_title.replace(' ', '%20')}/"
 
         if not args.no_images:
             md_content, img_count = download_images_from_markdown(
@@ -906,7 +911,9 @@ def main() -> None:
         html = extract_content(page, is_wechat)
 
         title = meta.get("title", "untitled")
-        safe_title = sanitize_filename(title)
+        # 标题提炼只用于非微信链接；公众号保留原标题
+        safe_title = sanitize_filename(
+            title if is_wechat else (args.filename or title))
 
         # Output .md directly under web2md/
         wrapper_dir = output_dir / "web2md"

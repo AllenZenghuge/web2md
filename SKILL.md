@@ -175,6 +175,8 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 4. **图片说明（必须补写）**：脚本只在每张图下留 `> **图 N**：（图片说明待补）` 占位。
    转换完必须由**对话模型读取本地图片**，把占位替换成该图的内容说明
    （不是 OCR 文字，是理解图片后在讲什么）。脚本不做本地 OCR、不调视觉模型。
+   **图注标题必须用主题词**（如「睡眠系统」「装备总览」「急救包」），
+   不要保留「图 1 / 图 2」这种编号。
 5. 有视频时用 DashScope Paraformer 转写逐字稿（`--no-transcript` 关闭）。
    抖音的 BGM 写进 frontmatter 的 `bgm` 字段。
 
@@ -195,6 +197,10 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 
 原则：信息要能直接拿来用——照着清单能买齐、照着步骤能做出来、照着路线能走。缺细节就是没做完。
 
+**3. 矛盾必须写进正文**：整理过程中发现原文内部或图文不一致（数字对不上、
+前后说法冲突、图注与正文不符），不能只在对话里提一句，要在正文对应位置用
+callout 写清楚：矛盾点、两边数值、判断依据、以哪个为准。
+
 > [!warning] 登录态
 > 小红书对未登录请求会重定向到 `/login`，此时脚本会明确报错并退出码 6。
 > 目前不支持 Cookie 注入，需要登录态的笔记无法抓取。
@@ -207,6 +213,15 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 ## 输出结构
 
 `.md` 文件直接存放在 `web2md/` 下，不再按类型分子目录：
+
+> [!important] 文件名规则（仅非微信链接）
+> 公众号文章用原标题即可；**小红书 / 抖音 / 普通网页要重新提炼一个短标题**，
+> 用 `--filename` 传入：
+> - 控制在 20 字以内，能一眼看出是什么内容
+> - 不要全角/半角标点（`。：（）！？、` 等），可以有引号、下划线、短横线
+> - 例：`国庆亚丁装备清单。基重（不含水、食物和燃料）：8kg` → `亚丁五天四晚_8kg装备清单`
+>
+> 图片目录名跟随文件名，frontmatter 的 `title` 字段仍保留原标题。
 
 ```
 ./
@@ -225,7 +240,8 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
             └── img_001.jpg
 ```
 
-Markdown 中图片引用使用 **vault 根相对路径**：`web2md/images/文章标题/img_001.jpg`
+Markdown 中图片引用使用**相对笔记的路径**：`images/文章标题/img_001.jpg`。
+（笔记本身在 `web2md/` 下，写成 `web2md/images/...` 会被解析成 `web2md/web2md/images/...`，图片不显示。）
 
 ## 错误码
 
