@@ -1,0 +1,13 @@
+# web2md 本地转写（可选依赖）
+#
+# 用途：脚本加 --local-asr 时，云转写失败会降级到本地 faster-whisper 转写。
+# 不需要系统 ffmpeg —— PyAV 的 wheel 自带解码库。
+#
+# 装法（装进跑 web2md 的那个 Python 环境即可，不装也能正常用）：
+#   pip install -r scripts/requirements-local-asr.txt
+#   python3 scripts/web2md.py "<url>" --local-asr
+#
+# 模型：首次运行自动下载到 ~/.local/share/whisper-models/faster（small 约 460M）。
+# 国内直连 huggingface.co 不通，asr.py 已默认设 HF_ENDPOINT=https://hf-mirror.com。
+
+faster-whisper>=1.2.1

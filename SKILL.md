@@ -106,6 +106,8 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 | `--no-transcript` | 小红书/抖音：跳过语音转写（不生成逐字稿） |
 | `--asr-model` | DashScope 转写模型，默认 `paraformer-v2` |
 | `--language` | 转写语言提示，默认 `zh` |
+| `--local-asr` | 云转写失败时降级到本地 faster-whisper。需额外装可选依赖，见下面「本地转写（可选）」 |
+| `--local-asr-model` | 本地 whisper 模型尺寸：`tiny`/`base`/`small`/`medium`，默认 `small` |
 
 ## Frontmatter 字段
 
@@ -177,6 +179,9 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
    （不是 OCR 文字，是理解图片后在讲什么）。脚本不做本地 OCR、不调视觉模型。
 5. 有视频时用 DashScope Paraformer 转写逐字稿（`--no-transcript` 关闭）。
    抖音的 BGM 写进 frontmatter 的 `bgm` 字段。
+   **云转写经常失败**：Paraformer 只接受公网 URL、由服务端去拉抖音/小红书 CDN，而 CDN
+   校验 Referer/UA，服务端请求基本都被 403。这种情况加 `--local-asr` 走本地转写，
+   见下面「本地转写（可选）」。
 
 ### 图片处理规则（所有来源通用，公众号同样适用）
 
@@ -221,6 +226,30 @@ callout 写清楚：矛盾点、两边数值、判断依据、以哪个为准。
 - **Playwright 后端**：Python 3.9+、Google Chrome、Playwright（`pip install playwright`）
 - **defuddle 后端**：Node.js、`npm install -g defuddle`
 
+## 本地转写（可选）
+
+云转写（Paraformer）只吃公网 URL，抖音/小红书 CDN 会 403，实际经常转不出来。
+`--local-asr` 让脚本在云转写失败时降级到本地 faster-whisper，**不需要系统 ffmpeg**
+（PyAV 的 wheel 自带解码库）。
+
+```bash
+# 装进跑 web2md 的那个 Python 环境即可（可选，不装也能正常用）
+pip install -r scripts/requirements-local-asr.txt
+
+# 之后照常跑，加 --local-asr 就会在云转写失败时兜底
+python3 scripts/web2md.py "<url>" --local-asr
+```
+
+- 模型首次运行自动下到 `~/.local/share/whisper-models/faster`，`small` 约 460M
+- 国内直连 huggingface.co 不通，`asr.py` 已默认设 `HF_ENDPOINT=https://hf-mirror.com`
+- 性能参考：3 分半音频，`small` + int8 + CPU，2018 款 i5 约 3.5 分钟，别指望实时
+- 依赖缺失时脚本只打印安装命令并跳过转写，**不影响转换主流程**
+
+> [!warning] av 版本坑
+> faster-whisper 1.2.1 的 `decode_audio()` 内部调 `av.open(metadata_errors=...)`，
+> 而 av 19 已移除该参数，会直接 `TypeError`；降 av 到 14.x 又没有 py3.13 的 wheel。
+> 所以 `asr.py` 不用它的 `decode_audio()`，改成自己用 PyAV 解成 16k 单声道 float32 再喂进去。
+
 ## 输出结构
 
 `.md` 文件直接存放在 `web2md/` 下，不再按类型分子目录：
@@ -241,18 +270,26 @@ callout 写清楚：矛盾点、两边数值、判断依据、以哪个为准。
     ├── 文章B.md
     ├── 文章C.md
     ├── 转换记录.md
-    └── images/
-        ├── 文章A/
-        │   ├── img_001.jpg
-        │   └── img_002.png
-        ├── 文章B/
-        │   └── img_001.jpg
-        └── 文章C/
-            └── img_001.jpg
+    ├── images/
+    │   ├── 文章A/
+    │   │   ├── img_001.jpg
+    │   │   └── img_002.png
+    │   ├── 文章B/
+    │   │   └── img_001.jpg
+    │   └── 文章C/
+    │       └── img_001.jpg
+    └── videos/
+        └── 视频作品A.mp4
 ```
 
 Markdown 中图片引用使用**相对笔记的路径**：`images/文章标题/img_001.jpg`。
 （笔记本身在 `web2md/` 下，写成 `web2md/images/...` 会被解析成 `web2md/web2md/images/...`，图片不显示。）
+
+> [!important] 视频单独放 `videos/`
+> `--save-video` 下载的视频默认落在 `images/<标题>/<标题>-视频.mp4`，转完要**移到 `web2md/videos/`**：
+> 文件名去掉「-视频」后缀、与笔记同名（例：`为什么滑雪这么上瘾.mp4`）。
+> 笔记里单独开 `## 视频` 一节，用相对路径嵌入：`![](videos/为什么滑雪这么上瘾.mp4)`。
+> 远程 `video_url` 带签名会过期，只留作溯源，别指望长期能播。
 
 ## 错误码
 

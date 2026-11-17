@@ -394,5 +394,42 @@ class TestDouyinParser(unittest.TestCase):
         self.assertEqual(douyin_video_url_from_share(unchanged), unchanged)
 
 
+class TestLocalAsr(unittest.TestCase):
+    """v1.7.0: --local-asr 本地转写兜底"""
+
+    def test_flags_parsed(self):
+        """--local-asr 默认关闭，--local-asr-model 默认 small"""
+        old = sys.argv
+        try:
+            sys.argv = ["web2md.py", "http://example.com"]
+            a = parse_args()
+            self.assertFalse(a.local_asr)
+            self.assertEqual(a.local_asr_model, "small")
+
+            sys.argv = ["web2md.py", "http://example.com", "--local-asr",
+                        "--local-asr-model", "medium"]
+            a = parse_args()
+            self.assertTrue(a.local_asr)
+            self.assertEqual(a.local_asr_model, "medium")
+        finally:
+            sys.argv = old
+
+    def test_fmt_sec(self):
+        """秒数转 mm:ss，异常值返回空串"""
+        from asr import _fmt_sec
+        self.assertEqual(_fmt_sec(0), "00:00")
+        self.assertEqual(_fmt_sec(125.7), "02:05")
+        self.assertEqual(_fmt_sec(None), "")
+
+    def test_local_asr_available_returns_tuple(self):
+        """依赖探测不能抛异常，缺依赖时给得出原因"""
+        from asr import local_asr_available
+        ok, why = local_asr_available()
+        self.assertIsInstance(ok, bool)
+        self.assertIsInstance(why, str)
+        if not ok:
+            self.assertTrue(why)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

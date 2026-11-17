@@ -18,6 +18,10 @@ ASR_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/audio/asr/transcr
 TASK_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}"
 DEFAULT_ASR_MODEL = "paraformer-v2"
 
+# 本地转写（可选依赖 faster-whisper）默认值
+DEFAULT_LOCAL_MODEL = "small"
+LOCAL_MODEL_ROOT = os.path.expanduser("~/.local/share/whisper-models/faster")
+
 
 class AsrError(RuntimeError):
     """转写失败，message 里带平台返回的错误码，便于定位。"""
@@ -145,6 +149,105 @@ def _parse_transcription(data: dict, *, model: str) -> Transcript:
 def _fmt_ms(ms: Any) -> str:
     try:
         total = int(ms) // 1000
+    except (TypeError, ValueError):
+        return ""
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+# --------------------------------------------------------------- 本地转写（可选）
+
+_LOCAL_ASR_HINT = """未安装本地转写环境。装法：
+  python3 -m venv ~/.local/share/whisper-env
+  ~/.local/share/whisper-env/bin/pip install faster-whisper
+装完用该环境的解释器跑本脚本。模型首次运行自动下载到 ~/.local/share/whisper-models/faster，
+国内直连 huggingface.co 不通，脚本已默认走 hf-mirror.com。"""
+
+
+class LocalAsrUnavailable(AsrError):
+    """本地转写依赖缺失，message 里带安装命令。"""
+
+
+def local_asr_available() -> tuple[bool, str]:
+    """本地转写依赖是否就绪。返回 (可用, 说明)。"""
+    for mod in ("av", "numpy", "faster_whisper"):
+        try:
+            __import__(mod)
+        except ImportError as e:
+            return False, f"{mod}: {e}"
+    return True, ""
+
+
+def _decode_16k_mono(media_path: str):
+    """用 PyAV 把音/视频解成 16k 单声道 float32 numpy 数组。
+
+    不走 faster-whisper 的 decode_audio()：它内部调 av.open(metadata_errors=...)，
+    而 av 19 已移除该参数（faster-whisper 1.2.1 会 TypeError），降 av 又缺 py3.13 的
+    wheel。自己解码反而稳，且 PyAV 的 wheel 自带解码库，不需要系统 ffmpeg。
+    """
+    import av
+    import numpy as np
+
+    chunks = []
+    with av.open(media_path, mode="r") as container:
+        stream = next((s for s in container.streams if s.type == "audio"), None)
+        if stream is None:
+            raise AsrError("本地转写失败：文件里没有音轨")
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=16000)
+        for frame in container.decode(stream):
+            for rf in resampler.resample(frame):
+                chunks.append(rf.to_ndarray().reshape(-1))
+        for rf in resampler.resample(None):  # flush
+            chunks.append(rf.to_ndarray().reshape(-1))
+
+    if not chunks:
+        raise AsrError("本地转写失败：没有解出音频")
+    return np.concatenate(chunks).astype(np.float32) / 32768.0
+
+
+def transcribe_local(media_path: str, *, model_size: str = DEFAULT_LOCAL_MODEL,
+                     language: str = "zh", model_root: str = "",
+                     initial_prompt: str = "") -> Transcript:
+    """本地 faster-whisper 转写。media_path 是本地音/视频文件。
+
+    CPU + int8 跑，3 分半的音频在 2018 款 i5 上约 3.5 分钟，别指望实时。
+    """
+    ok, why = local_asr_available()
+    if not ok:
+        raise LocalAsrUnavailable(f"{_LOCAL_ASR_HINT}\n（缺：{why}）")
+
+    os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+    if not os.path.exists(media_path):
+        raise AsrError(f"本地转写失败：文件不存在 {media_path}")
+
+    from faster_whisper import WhisperModel
+
+    audio = _decode_16k_mono(media_path)
+    model = WhisperModel(model_size, device="cpu", compute_type="int8",
+                         download_root=model_root or LOCAL_MODEL_ROOT)
+    segments, _info = model.transcribe(
+        audio, language=language, vad_filter=True, beam_size=5,
+        initial_prompt=initial_prompt or None,
+    )
+
+    texts, sentences = [], []
+    for seg in segments:
+        text = seg.text.strip()
+        if not text:
+            continue
+        texts.append(text)
+        sentences.append({"begin": _fmt_sec(seg.start), "text": text})
+
+    return Transcript(
+        text="\n".join(texts),
+        sentences=sentences,
+        source_url=media_path,
+        model=f"faster-whisper/{model_size}",
+    )
+
+
+def _fmt_sec(sec: Any) -> str:
+    try:
+        total = int(float(sec))
     except (TypeError, ValueError):
         return ""
     return f"{total // 60:02d}:{total % 60:02d}"

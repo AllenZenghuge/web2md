@@ -20,7 +20,8 @@ from markdownify import markdownify as md_convert
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from readability import Document
 
-from asr import AsrError, render_transcript, transcribe
+from asr import (AsrError, local_asr_available, render_transcript, transcribe,
+                 transcribe_local)
 from platforms import (
     DOUYIN_DESKTOP_UA,
     PLATFORM_DOUYIN,
@@ -189,6 +190,17 @@ def parse_args() -> argparse.Namespace:
         "--language",
         default="zh",
         help="转写语言提示（默认 zh）",
+    )
+    parser.add_argument(
+        "--local-asr",
+        action="store_true",
+        help="云转写失败（或未配 key）时降级到本地 faster-whisper。需要额外装可选依赖，"
+             "见 scripts/requirements-local-asr.txt。不加此参数时行为与原来完全一致",
+    )
+    parser.add_argument(
+        "--local-asr-model",
+        default="small",
+        help="本地转写的 whisper 模型尺寸：tiny/base/small/medium（默认 small）",
     )
     return parser.parse_args()
 
@@ -739,13 +751,18 @@ def convert_social_post(args, platform: str, output_dir: Path) -> None:
     transcript = None
     if post.video_url:
         parts.append(f"**视频地址**：{post.video_url}")
-        if args.save_video:
-            name, ok = download_media(post.video_url, img_dir if not args.no_images else wrapper_dir,
-                                       f"{safe_title}-视频", "https://www.douyin.com/")
+        video_dir = img_dir if not args.no_images else wrapper_dir
+        local_video = ""
+        # --save-video 要留档；--local-asr 要本地文件才能解码，两种情况都得先下
+        if args.save_video or args.local_asr:
+            name, ok = download_media(post.video_url, video_dir,
+                                       f"{safe_title}-视频", platform_referer)
             if ok:
-                parts.append(f"**本地视频**：{img_rel_prefix}{name}")
+                local_video = str(video_dir / name)
+                if args.save_video:
+                    parts.append(f"**本地视频**：{img_rel_prefix}{name}")
         if not args.no_transcript:
-            transcript = _try_transcribe(post.video_url, args)
+            transcript = _try_transcribe(post.video_url, args, local_video)
 
     if transcript is not None:
         parts.append(transcript)
@@ -793,21 +810,51 @@ def _social_description(post: "Post") -> str:
     return text[:120]
 
 
-def _try_transcribe(video_url: str, args) -> str:
-    """转写 + 摘要。任何一步失败都降级为仅保留视频地址，不中断转换。"""
+def _try_transcribe(video_url: str, args, local_media: str = "") -> str:
+    """转写。云失败时若开了 --local-asr 则降级本地；都失败只跳过，不中断转换。"""
+    t = None
     try:
         t = transcribe(video_url, model=args.asr_model, language=args.language,
                        timeout=max(args.timeout * 20, 300))
     except AsrError as e:
-        print(f"WARNING: 转写跳过 — {e}", file=sys.stderr)
-        return ""
-    if not t.ok:
+        print(f"WARNING: 云转写失败 — {e}", file=sys.stderr)
+
+    if t is None or not t.ok:
+        if not args.local_asr:
+            print("WARNING: 转写跳过（加 --local-asr 可改用本地转写）", file=sys.stderr)
+            return ""
+        t = _local_fallback(local_media, args)
+
+    if t is None or not t.ok:
         print("WARNING: 转写结果为空", file=sys.stderr)
         return ""
 
     blocks = ["## 逐字稿", render_transcript(t)]
-    print(f"Transcript: {len(t.text)} 字", file=sys.stderr)
+    print(f"Transcript: {len(t.text)} 字（{t.model}）", file=sys.stderr)
     return "\n\n".join(blocks)
+
+
+def _local_fallback(local_media: str, args):
+    """本地 faster-whisper 兜底。依赖缺失时把安装命令打给用户，然后返回 None。"""
+    ok, why = local_asr_available()
+    if not ok:
+        print(f"WARNING: 本地转写依赖缺失（{why}）\n"
+              "  装法：python3 -m venv ~/.local/share/whisper-env && "
+              "~/.local/share/whisper-env/bin/pip install faster-whisper\n"
+              "  然后用该环境的解释器重跑本脚本", file=sys.stderr)
+        return None
+    if not local_media:
+        print("WARNING: 本地转写需要视频文件，但没下载到，跳过", file=sys.stderr)
+        return None
+
+    print(f"INFO: 改用本地 faster-whisper/{args.local_asr_model} 转写"
+          "（首次会下载模型，音频长则数分钟）", file=sys.stderr)
+    try:
+        return transcribe_local(local_media, model_size=args.local_asr_model,
+                                language=args.language)
+    except AsrError as e:
+        print(f"WARNING: 本地转写失败 — {e}", file=sys.stderr)
+        return None
 
 
 def main() -> None:
