@@ -206,10 +206,14 @@ def _decode_16k_mono(media_path: str):
 
 def transcribe_local(media_path: str, *, model_size: str = DEFAULT_LOCAL_MODEL,
                      language: str = "zh", model_root: str = "",
-                     initial_prompt: str = "") -> Transcript:
+                     initial_prompt: str = "", vad_filter: bool = False) -> Transcript:
     """本地 faster-whisper 转写。media_path 是本地音/视频文件。
 
-    CPU + int8 跑，3 分半的音频在 2018 款 i5 上约 3.5 分钟，别指望实时。
+    CPU + int8 跑，3 分半的音频在 2018 款 i5 上约 3 分钟，别指望实时。
+
+    **vad_filter 默认关闭**：抖音/小红书 vlog 常把口播垫在音乐上，Silero VAD 会把
+    整片判成非语音，结果只吐出几个字的噪音（实测一条 2:48 的口播 vlog 只出了 5 个字）。
+    宁可慢一点也别漏内容；确实需要过滤静音时用 --vad 显式打开。
     """
     ok, why = local_asr_available()
     if not ok:
@@ -225,7 +229,7 @@ def transcribe_local(media_path: str, *, model_size: str = DEFAULT_LOCAL_MODEL,
     model = WhisperModel(model_size, device="cpu", compute_type="int8",
                          download_root=model_root or LOCAL_MODEL_ROOT)
     segments, _info = model.transcribe(
-        audio, language=language, vad_filter=True, beam_size=5,
+        audio, language=language, vad_filter=vad_filter, beam_size=5,
         initial_prompt=initial_prompt or None,
     )
 

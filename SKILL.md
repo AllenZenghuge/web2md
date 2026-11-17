@@ -108,6 +108,7 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
 | `--language` | 转写语言提示，默认 `zh` |
 | `--local-asr` | 云转写失败时降级到本地 faster-whisper。需额外装可选依赖，见下面「本地转写（可选）」 |
 | `--local-asr-model` | 本地 whisper 模型尺寸：`tiny`/`base`/`small`/`medium`，默认 `small` |
+| `--vad` | 本地转写时开 VAD 静音过滤。**默认关闭**——vlog 的口播常垫在音乐上，VAD 会把整片判成非语音 |
 
 ## Frontmatter 字段
 
@@ -244,6 +245,11 @@ python3 scripts/web2md.py "<url>" --local-asr
 - 国内直连 huggingface.co 不通，`asr.py` 已默认设 `HF_ENDPOINT=https://hf-mirror.com`
 - 性能参考：3 分半音频，`small` + int8 + CPU，2018 款 i5 约 3.5 分钟，别指望实时
 - 依赖缺失时脚本只打印安装命令并跳过转写，**不影响转换主流程**
+
+> [!warning] 别默认开 VAD
+> 实测一条 2:48 的口播 vlog（口播垫在 BGM 上），`vad_filter=True` 会把整片判成非语音，
+> 只吐出 5 个字的噪音，很容易误判成「这视频没有口播」。现在默认 `vad_filter=False`，
+> 要过滤静音再用 `--vad` 打开。另外 whisper 中文常输出繁体，需要简体就自己转（opencc t2s）。
 
 > [!warning] av 版本坑
 > faster-whisper 1.2.1 的 `decode_audio()` 内部调 `av.open(metadata_errors=...)`，

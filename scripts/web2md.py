@@ -202,6 +202,12 @@ def parse_args() -> argparse.Namespace:
         default="small",
         help="本地转写的 whisper 模型尺寸：tiny/base/small/medium（默认 small）",
     )
+    parser.add_argument(
+        "--vad",
+        action="store_true",
+        help="本地转写时开启 VAD 静音过滤。默认关闭——vlog 的口播常垫在音乐上，"
+             "VAD 会把整片判成非语音，只吐出几个字的噪音",
+    )
     return parser.parse_args()
 
 
@@ -851,7 +857,7 @@ def _local_fallback(local_media: str, args):
           "（首次会下载模型，音频长则数分钟）", file=sys.stderr)
     try:
         return transcribe_local(local_media, model_size=args.local_asr_model,
-                                language=args.language)
+                                language=args.language, vad_filter=args.vad)
     except AsrError as e:
         print(f"WARNING: 本地转写失败 — {e}", file=sys.stderr)
         return None
