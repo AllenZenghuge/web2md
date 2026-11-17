@@ -177,6 +177,9 @@ web2md.py <url> [--output-dir DIR] [--no-images] [--timeout SEC] [--backend auto
    （不是 OCR 文字，是理解图片后在讲什么）。脚本不做本地 OCR、不调视觉模型。
    **图注标题必须用主题词**（如「睡眠系统」「装备总览」「急救包」），
    不要保留「图 1 / 图 2」这种编号。
+   **图片文件名也要同步改成主题词**：`img_001.webp` → `睡眠系统.webp`，
+   alt 文本也改成主题词（`![睡眠系统](images/…/睡眠系统.webp)`）。
+   重名时加后缀 `-2`。重命名后必须重新校验所有图片引用都能找到文件。
 5. 有视频时用 DashScope Paraformer 转写逐字稿（`--no-transcript` 关闭）。
    抖音的 BGM 写进 frontmatter 的 `bgm` 字段。
 
