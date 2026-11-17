@@ -130,14 +130,11 @@ def is_wechat_url(url: str) -> bool:
 
 
 def sanitize_filename(title: str) -> str:
-    """Remove characters unsafe for file/directory names, preserve CJK.
-
-    空格统一换成下划线：文件名与图片目录名都不带空格，md 里也不会再出现 %20。
-    """
+    """Remove characters unsafe for file/directory names, preserve CJK."""
     sanitized = re.sub(r'[\\/:*?"<>|]', "-", title)
-    sanitized = re.sub(r"\s+", "_", sanitized).strip(" .-_")
+    sanitized = sanitized.strip(" .-")
     if len(sanitized) > 100:
-        sanitized = sanitized[:100].rsplit("_", 1)[0]
+        sanitized = sanitized[:100].rsplit("-", 1)[0]
     return sanitized or "untitled"
 
 

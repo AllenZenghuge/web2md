@@ -58,14 +58,6 @@ class TestOutputStructure(unittest.TestCase):
         result = sanitize_filename(long_title)
         self.assertLessEqual(len(result), 100)
 
-    def test_sanitize_filename_replaces_spaces_with_underscore(self):
-        """空格统一换成下划线，文件名和图片目录名都不带空格"""
-        result = sanitize_filename("软考成绩未出 但考试难度可以预测通过率")
-        self.assertEqual(result, "软考成绩未出_但考试难度可以预测通过率")
-        self.assertNotIn(" ", result)
-        # 连续空白压成一个下划线
-        self.assertEqual(sanitize_filename("a   b\tc"), "a_b_c")
-
 
 class TestURLAnalysis(unittest.TestCase):
     """URL 分类逻辑"""
