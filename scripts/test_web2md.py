@@ -478,6 +478,39 @@ class TestDuplicateCheck(unittest.TestCase):
             encoding="utf-8")
         self.assertEqual(find_converted("https://v.douyin.com/ABC/", Path(self.tmpdir)), {})
 
+    def test_hit_by_title_author_different_shortlink(self):
+        """同一作品换了短链，靠标题+作者也能查到"""
+        from web2md import find_converted
+        (self.wrapper / "第二要义.md").write_text(
+            "---\ntitle: 第二要义\nauthor: 卢耳浮\n"
+            "source_url: https://v.douyin.com/OLD123/\n---\n",
+            encoding="utf-8")
+        hit = find_converted("https://v.douyin.com/NEW456/", Path(self.tmpdir),
+                             title="第二要义", author="卢耳浮")
+        self.assertEqual(hit["by"], "title+author")
+        self.assertEqual(hit["source_url"], "https://v.douyin.com/OLD123/")
+
+    def test_title_author_normalization(self):
+        """标题带空格/标点/emoji 时仍能对上"""
+        from web2md import find_converted
+        (self.wrapper / "a.md").write_text(
+            "---\ntitle: 第二要义\nauthor: 卢耳浮🦘\n"
+            "source_url: https://v.douyin.com/OLD/\n---\n",
+            encoding="utf-8")
+        hit = find_converted("https://v.douyin.com/NEW/", Path(self.tmpdir),
+                             title="  第二要义！", author="卢耳浮")
+        self.assertEqual(hit["by"], "title+author")
+
+    def test_different_author_not_hit(self):
+        """标题一样但作者不同，不能误判为重复"""
+        from web2md import find_converted
+        (self.wrapper / "a.md").write_text(
+            "---\ntitle: 第二要义\nauthor: 卢耳浮\n"
+            "source_url: https://v.douyin.com/OLD/\n---\n",
+            encoding="utf-8")
+        self.assertEqual(find_converted("https://v.douyin.com/NEW/", Path(self.tmpdir),
+                                        title="第二要义", author="别人"), {})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -718,6 +718,12 @@ def convert_social_post(args, platform: str, output_dir: Path) -> None:
         sys.exit(6)
 
     title = post.title or "未命名"
+    # 抓取前只按 URL 查过；短链每次分享都可能不一样，抓到标题和作者后再兜一次
+    if not args.force:
+        hit = find_converted(args.url, output_dir, title=title, author=post.author or "")
+        if hit and hit.get("by") == "title+author":
+            _report_duplicate(hit)
+            return
     safe_title = sanitize_filename(args.filename or title)
     wrapper_dir = output_dir / "web2md"
     wrapper_dir.mkdir(parents=True, exist_ok=True)
@@ -876,32 +882,73 @@ def _norm_url(u: str) -> str:
     return u.lower()
 
 
-def find_converted(url: str, output_dir: Path) -> dict:
-    """在输出目录已有笔记里按 source_url 找同一个来源。返回 {title, path, converted_at} 或 {}。"""
+def _read_existing_notes(output_dir: Path):
+    """遍历 web2md/ 下已有笔记，yield (Path, frontmatter 文本)。"""
     wrapper = output_dir / "web2md"
     if not wrapper.is_dir():
-        return {}
-    target = _norm_url(url)
-    if not target:
-        return {}
+        return
     for md in sorted(wrapper.glob("*.md")):
         if md.name.startswith("转换记录"):
             continue
         try:
-            head = md.read_text(encoding="utf-8", errors="ignore")[:3000]
+            yield md, md.read_text(encoding="utf-8", errors="ignore")[:3000]
         except OSError:
             continue
-        m = re.search(r"^source_url:\s*(.+)$", head, re.M)
-        if not m or _norm_url(m.group(1)) != target:
+
+
+def _note_meta(head: str) -> dict:
+    """从 frontmatter 文本里取标题、作者、来源、转换时间。"""
+    def get(key):
+        m = re.search(rf"^{key}:\s*(.+)$", head, re.M)
+        return m.group(1).strip().strip("'\"") if m else ""
+
+    title = re.search(r"^title:\s*(.+)$", head, re.M)
+    return {
+        "title": title.group(1).strip().strip("'\"") if title else "",
+        "author": get("author"),
+        "source_url": get("source_url"),
+        "converted_at": get("converted_at"),
+    }
+
+
+def find_converted(url: str, output_dir: Path, *, title: str = "", author: str = "") -> dict:
+    """查已转换笔记：先按 source_url，再按「标题+作者」兜短链换皮。
+
+    URL 查重拦得住同链接重复；抖音短链每次分享都可能不一样，所以抓到
+    post 之后再拿 title+author 查一次，避免同一作品转两遍。两者都没命中
+    才返回 {}。返回 {title, author, path, converted_at, source_url, by}。
+    """
+    target = _norm_url(url)
+    for md, head in _read_existing_notes(output_dir):
+        meta = _note_meta(head)
+        if target and meta["source_url"] and _norm_url(meta["source_url"]) == target:
+            by = "source_url"
+        elif (title and author and meta["title"] and meta["author"]
+              and _norm_text(title) == _norm_text(meta["title"])
+              and _norm_text(author) == _norm_text(meta["author"])):
+            by = "title+author"
+        else:
             continue
-        title = re.search(r"^title:\s*(.+)$", head, re.M)
-        conv = re.search(r"^converted_at:\s*(.+)$", head, re.M)
-        return {
-            "title": title.group(1).strip().strip("'\"") if title else md.stem,
-            "path": str(md),
-            "converted_at": conv.group(1).strip().strip("'\"") if conv else "",
-        }
+        return {**meta, "path": str(md), "title": meta["title"] or md.stem, "by": by}
     return {}
+
+
+def _norm_text(s: str) -> str:
+    """标题/作者归一化：去空白、标点和 emoji，只留中文/字母/数字。"""
+    return re.sub(r"[\s\W_]+", "", s or "").lower()
+
+
+def _report_duplicate(hit: dict) -> None:
+    """统一打印「已转换过」回显，抓取前后两处查重都用它。"""
+    reason = "（同一作品的另一个链接）" if hit.get("by") == "title+author" else ""
+    print(f"已转换过，本次跳过{reason}。", file=sys.stderr)
+    print(f"  标题：{hit['title']}", file=sys.stderr)
+    print(f"  文件：{hit['path']}", file=sys.stderr)
+    if hit.get("converted_at"):
+        print(f"  时间：{hit['converted_at']}", file=sys.stderr)
+    if hit.get("source_url"):
+        print(f"  来源：{hit['source_url']}", file=sys.stderr)
+    print("  确认要重转，加 --force", file=sys.stderr)
 
 
 def main() -> None:
@@ -926,13 +973,7 @@ def main() -> None:
     if not args.force:
         hit = find_converted(args.url, output_dir)
         if hit:
-            print("已转换过，本次跳过。", file=sys.stderr)
-            print(f"  标题：{hit['title']}", file=sys.stderr)
-            print(f"  文件：{hit['path']}", file=sys.stderr)
-            if hit["converted_at"]:
-                print(f"  时间：{hit['converted_at']}", file=sys.stderr)
-            print(f"  来源：{args.url}", file=sys.stderr)
-            print("  确认要重转，加 --force", file=sys.stderr)
+            _report_duplicate(hit)
             sys.exit(0)
 
     platform = detect_platform(args.url)
